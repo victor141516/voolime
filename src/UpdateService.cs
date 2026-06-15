@@ -168,20 +168,68 @@ internal sealed class UpdateService
         var currentPath = Environment.ProcessPath
             ?? throw new InvalidOperationException("The current executable path could not be resolved.");
         var scriptPath = Path.Combine(Path.GetTempPath(), $"VoolimeUpdate-{Guid.NewGuid():N}.ps1");
+        var updaterLogPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Voolime",
+            "Logs",
+            "updater.log");
         var currentPid = Environment.ProcessId;
         var escapedCurrent = EscapePowerShellString(currentPath);
         var escapedDownloaded = EscapePowerShellString(downloadedPath);
         var escapedScript = EscapePowerShellString(scriptPath);
+        var escapedUpdaterLog = EscapePowerShellString(updaterLogPath);
 
         var script = $$"""
         $ErrorActionPreference = 'Stop'
         $current = '{{escapedCurrent}}'
         $downloaded = '{{escapedDownloaded}}'
-        Wait-Process -Id {{currentPid}} -Timeout 30
-        Copy-Item -LiteralPath $downloaded -Destination $current -Force
-        Start-Process -FilePath $current
-        Remove-Item -LiteralPath $downloaded -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath '{{escapedScript}}' -Force -ErrorAction SilentlyContinue
+        $log = '{{escapedUpdaterLog}}'
+        $script = '{{escapedScript}}'
+        function Write-UpdaterLog([string] $message) {
+            $directory = Split-Path -LiteralPath $log -Parent
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            Add-Content -LiteralPath $log -Value "$(Get-Date -Format o) $message"
+        }
+
+        try {
+            Write-UpdaterLog "Updater started. Current: $current. Downloaded: $downloaded."
+            try {
+                Wait-Process -Id {{currentPid}} -Timeout 30 -ErrorAction Stop
+                Write-UpdaterLog "Previous process exited."
+            }
+            catch {
+                if (Get-Process -Id {{currentPid}} -ErrorAction SilentlyContinue) {
+                    throw
+                }
+                Write-UpdaterLog "Previous process was already closed."
+            }
+
+            $deadline = (Get-Date).AddSeconds(30)
+            do {
+                try {
+                    Copy-Item -LiteralPath $downloaded -Destination $current -Force
+                    Write-UpdaterLog "Executable replaced."
+                    break
+                }
+                catch {
+                    if ((Get-Date) -ge $deadline) {
+                        throw
+                    }
+                    Start-Sleep -Milliseconds 250
+                }
+            } while ($true)
+
+            Start-Process -FilePath $current
+            Write-UpdaterLog "Updated app launched."
+        }
+        catch {
+            Write-UpdaterLog "Updater failed: $($_.Exception.ToString())"
+            throw
+        }
+        finally {
+            Remove-Item -LiteralPath $downloaded -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue
+        }
         """;
 
         File.WriteAllText(scriptPath, script);
