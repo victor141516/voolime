@@ -1,47 +1,143 @@
-using Microsoft.Win32;
+using System.IO;
+using System.Text.Json;
 
 namespace Voolime;
 
 internal static class AppSettings
 {
-    private const string KeyPath = @"Software\Voolime";
-    private const string ActivationModifierValue = "ActivationModifier";
-    private const string KeyboardActivationModifiersValue = "KeyboardActivationModifiers";
-    private const string MouseActivationModifiersValue = "MouseActivationModifiers";
-
-    public static ActivationModifiers LoadKeyboardActivationModifiers()
+    private static readonly object Sync = new();
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
-        var value = key?.GetValue(KeyboardActivationModifiersValue) as string;
-        if (Enum.TryParse<ActivationModifiers>(value, ignoreCase: true, out var modifiers))
+        AllowTrailingCommas = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        WriteIndented = true
+    };
+
+    private static string SettingsFilePath => Path.Combine(AppDataRoot, "settings.json");
+
+    private static string AppDataRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Voolime");
+
+    public static ActivationModifiers LoadKeyboardActivationModifiers() =>
+        ParseModifiers(
+            LoadSettings().KeyboardActivationModifiers,
+            ActivationModifiers.Shift);
+
+    public static void SaveKeyboardActivationModifiers(ActivationModifiers modifiers)
+    {
+        lock (Sync)
         {
-            return modifiers;
+            var settings = LoadSettings();
+            settings.KeyboardActivationModifiers = FormatModifiers(modifiers);
+            SaveSettings(settings);
+        }
+    }
+
+    public static ActivationModifiers LoadMouseActivationModifiers() =>
+        ParseModifiers(
+            LoadSettings().MouseActivationModifiers,
+            ActivationModifiers.Control | ActivationModifiers.Shift);
+
+    public static void SaveMouseActivationModifiers(ActivationModifiers modifiers)
+    {
+        lock (Sync)
+        {
+            var settings = LoadSettings();
+            settings.MouseActivationModifiers = FormatModifiers(modifiers);
+            SaveSettings(settings);
+        }
+    }
+
+    private static SettingsFile LoadSettings()
+    {
+        lock (Sync)
+        {
+            Directory.CreateDirectory(AppDataRoot);
+            if (!File.Exists(SettingsFilePath))
+            {
+                var settings = new SettingsFile();
+                SaveSettings(settings);
+                return settings;
+            }
+
+            try
+            {
+                var json = File.ReadAllText(SettingsFilePath);
+                return JsonSerializer.Deserialize<SettingsFile>(json, JsonOptions) ?? new SettingsFile();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"Failed to read settings file. Defaults will be used. {ex.Message}");
+                return new SettingsFile();
+            }
+        }
+    }
+
+    private static void SaveSettings(SettingsFile settings)
+    {
+        Directory.CreateDirectory(AppDataRoot);
+        var json = JsonSerializer.Serialize(settings, JsonOptions);
+        File.WriteAllText(SettingsFilePath, json);
+    }
+
+    private static ActivationModifiers ParseModifiers(string[]? values, ActivationModifiers defaultModifiers)
+    {
+        if (values is null)
+        {
+            return defaultModifiers;
         }
 
-        var legacyValue = key?.GetValue(ActivationModifierValue) as string;
-        return Enum.TryParse<ActivationModifiers>(legacyValue, ignoreCase: true, out var modifier)
-            ? modifier
-            : ActivationModifiers.Shift;
+        var modifiers = ActivationModifiers.None;
+        foreach (var value in values)
+        {
+            if (Enum.TryParse<ActivationModifiers>(value, ignoreCase: true, out var modifier))
+            {
+                modifiers |= modifier;
+            }
+            else
+            {
+                AppLogger.Warn($"Unknown activation modifier in settings file: {value}");
+            }
+        }
+
+        return modifiers;
     }
 
-    public static void SaveKeyboardActivationModifiers(ActivationModifiers modifiers) =>
-        SaveModifiers(KeyboardActivationModifiersValue, modifiers);
-
-    public static ActivationModifiers LoadMouseActivationModifiers()
+    private static string[] FormatModifiers(ActivationModifiers modifiers)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
-        var value = key?.GetValue(MouseActivationModifiersValue) as string;
-        return Enum.TryParse<ActivationModifiers>(value, ignoreCase: true, out var modifiers)
-            ? modifiers
-            : ActivationModifiers.Control | ActivationModifiers.Shift;
+        var values = new List<string>();
+        if (modifiers.HasFlag(ActivationModifiers.Control))
+        {
+            values.Add(nameof(ActivationModifiers.Control));
+        }
+
+        if (modifiers.HasFlag(ActivationModifiers.Shift))
+        {
+            values.Add(nameof(ActivationModifiers.Shift));
+        }
+
+        if (modifiers.HasFlag(ActivationModifiers.Alt))
+        {
+            values.Add(nameof(ActivationModifiers.Alt));
+        }
+
+        return values.ToArray();
     }
 
-    public static void SaveMouseActivationModifiers(ActivationModifiers modifiers) =>
-        SaveModifiers(MouseActivationModifiersValue, modifiers);
-
-    private static void SaveModifiers(string valueName, ActivationModifiers modifiers)
+    private sealed class SettingsFile
     {
-        using var key = Registry.CurrentUser.CreateSubKey(KeyPath);
-        key?.SetValue(valueName, modifiers.ToString(), RegistryValueKind.String);
+        public string[] KeyboardActivationModifiers { get; set; } =
+        [
+            nameof(ActivationModifiers.Shift)
+        ];
+
+        public string[] MouseActivationModifiers { get; set; } =
+        [
+            nameof(ActivationModifiers.Control),
+            nameof(ActivationModifiers.Shift)
+        ];
     }
 }
