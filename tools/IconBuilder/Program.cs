@@ -44,9 +44,6 @@ static Bitmap DrawVoolimeIcon(int size)
     using var shadow = new SolidBrush(Color.FromArgb(50, 0, 0, 0));
     graphics.FillEllipse(shadow, 38, 192, 136, 18);
 
-    DrawWave(graphics, Rect(166, 92, 43, 70), 9f);
-    DrawWave(graphics, Rect(176, 75, 65, 104), 9f);
-
     using var outerBrush = new LinearGradientBrush(speakerBounds, FromHtml("#58D34A"), FromHtml("#14723B"), 115f);
     using var outerPen = new Pen(FromHtml("#0E5132"), 8f) { LineJoin = LineJoin.Round };
     graphics.FillEllipse(outerBrush, speakerBounds);
@@ -109,22 +106,6 @@ static Bitmap DrawVoolimeIcon(int size)
     graphics.FillEllipse(glint, 66, 72, 35, 19);
 
     return bitmap;
-}
-
-static void DrawWave(Graphics graphics, RectangleF rect, float width)
-{
-    using var outline = new Pen(Color.FromArgb(235, 11, 19, 28), width + 5f)
-    {
-        StartCap = LineCap.Round,
-        EndCap = LineCap.Round
-    };
-    using var wave = new Pen(FromHtml("#DFFFF0"), width)
-    {
-        StartCap = LineCap.Round,
-        EndCap = LineCap.Round
-    };
-    graphics.DrawArc(outline, rect, -42, 84);
-    graphics.DrawArc(wave, rect, -42, 84);
 }
 
 static byte[] EncodePng(Bitmap bitmap)
