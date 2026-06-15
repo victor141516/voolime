@@ -76,44 +76,107 @@ internal sealed class AudioSessionService
 
     private static IEnumerable<AudioSession> MatchSessions(ActiveAppTarget target, IReadOnlyCollection<AudioSession> sessions)
     {
-        var targetPids = target.CandidateProcessIds.ToHashSet();
-        var targetPaths = NormalizePaths(target.CandidatePaths);
-        var targetNames = target.CandidateNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var exactPidMatches = sessions
-            .Where(s => targetPids.Contains(s.ProcessId))
-            .ToList();
-
-        if (exactPidMatches.Count > 0)
-        {
-            foreach (var session in sessions.Where(s =>
-                         targetPids.Contains(s.ProcessId) ||
-                         (!string.IsNullOrWhiteSpace(s.ProcessPath) && targetPaths.Contains(NormalizePath(s.ProcessPath))) ||
-                         targetNames.Contains(s.ProcessName)))
-            {
-                yield return session;
-            }
-
-            yield break;
-        }
+        var context = MatchContext.Create(target);
 
         foreach (var session in sessions)
         {
-            if (!string.IsNullOrWhiteSpace(session.ProcessPath) && targetPaths.Contains(NormalizePath(session.ProcessPath)))
-            {
-                yield return session;
-                continue;
-            }
-
-            if (targetNames.Contains(session.ProcessName))
+            if (IsMatch(session, context))
             {
                 yield return session;
             }
         }
     }
 
+    private static bool IsMatch(AudioSession session, MatchContext context)
+    {
+        if (context.ProcessIds.Contains(session.ProcessId))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.ProcessPath) && context.Paths.Contains(NormalizePath(session.ProcessPath)))
+        {
+            return true;
+        }
+
+        if (context.Names.Contains(session.ProcessName))
+        {
+            return true;
+        }
+
+        if (IsDisplayNameMatch(session.DisplayName, context.DisplayName))
+        {
+            return true;
+        }
+
+        return IsRelatedRendererProcess(session, context);
+    }
+
+    private static bool IsDisplayNameMatch(string? sessionDisplayName, string targetDisplayName)
+    {
+        var sessionName = NormalizeComparableText(sessionDisplayName);
+        var targetName = NormalizeComparableText(targetDisplayName);
+        if (sessionName.Length < 4 || targetName.Length < 4)
+        {
+            return false;
+        }
+
+        return sessionName == targetName ||
+               sessionName.Contains(targetName, StringComparison.OrdinalIgnoreCase) ||
+               targetName.Contains(sessionName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRelatedRendererProcess(AudioSession session, MatchContext context)
+    {
+        if (string.IsNullOrWhiteSpace(session.ProcessPath))
+        {
+            return false;
+        }
+
+        var sessionDirectory = NormalizeDirectory(session.ProcessPath);
+        if (string.IsNullOrWhiteSpace(sessionDirectory) || !context.Directories.Contains(sessionDirectory))
+        {
+            return false;
+        }
+
+        return context.Names.Any(targetName => AreProcessNamesRelated(targetName, session.ProcessName));
+    }
+
+    private static bool AreProcessNamesRelated(string targetName, string sessionName)
+    {
+        var target = NormalizeProcessName(targetName);
+        var session = NormalizeProcessName(sessionName);
+        if (target.Length < 5 || session.Length < 5)
+        {
+            return false;
+        }
+
+        return session.StartsWith(target, StringComparison.OrdinalIgnoreCase) ||
+               target.StartsWith(session, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeProcessName(string name)
+    {
+        var normalized = name.Trim();
+        foreach (var suffix in new[] { "Renderer", "Render", "Helper", "Child", "Gpu", "GPU", "Audio" })
+        {
+            if (normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && normalized.Length > suffix.Length + 4)
+            {
+                normalized = normalized[..^suffix.Length];
+                break;
+            }
+        }
+
+        return normalized;
+    }
+
     private static HashSet<string> NormalizePaths(IEnumerable<string> paths) =>
         paths.Select(NormalizePath)
+            .Where(static p => !string.IsNullOrWhiteSpace(p))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static HashSet<string> NormalizeDirectories(IEnumerable<string> paths) =>
+        paths.Select(NormalizeDirectory)
             .Where(static p => !string.IsNullOrWhiteSpace(p))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -133,6 +196,15 @@ internal sealed class AudioSessionService
             return path.Trim();
         }
     }
+
+    private static string NormalizeDirectory(string? path)
+    {
+        var normalized = NormalizePath(path);
+        return string.IsNullOrWhiteSpace(normalized) ? string.Empty : Path.GetDirectoryName(normalized) ?? string.Empty;
+    }
+
+    private static string NormalizeComparableText(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
 
     private static IEnumerable<AudioSession> EnumerateSessions()
     {
@@ -175,6 +247,12 @@ internal sealed class AudioSessionService
                 continue;
             }
 
+            var displayName = string.Empty;
+            if (control.GetDisplayName(out var rawDisplayName) == 0 && !string.IsNullOrWhiteSpace(rawDisplayName))
+            {
+                displayName = rawDisplayName;
+            }
+
             var processPath = NativeMethods.TryGetProcessImagePath((int)pid);
             var processName = GetProcessName((int)pid, processPath);
 
@@ -182,6 +260,7 @@ internal sealed class AudioSessionService
                 (int)pid,
                 processName,
                 processPath,
+                displayName,
                 Math.Clamp(level, 0f, 1f),
                 muted,
                 volume);
@@ -210,9 +289,26 @@ internal sealed class AudioSessionService
         int ProcessId,
         string ProcessName,
         string? ProcessPath,
+        string? DisplayName,
         float Volume,
         bool Muted,
         CoreAudio.ISimpleAudioVolume VolumeControl);
+
+    private sealed record MatchContext(
+        HashSet<int> ProcessIds,
+        HashSet<string> Paths,
+        HashSet<string> Directories,
+        HashSet<string> Names,
+        string DisplayName)
+    {
+        public static MatchContext Create(ActiveAppTarget target) =>
+            new(
+                target.CandidateProcessIds.ToHashSet(),
+                NormalizePaths(target.CandidatePaths),
+                NormalizeDirectories(target.CandidatePaths),
+                target.CandidateNames.ToHashSet(StringComparer.OrdinalIgnoreCase),
+                target.DisplayName);
+    }
 }
 
 internal static class CoreAudio
