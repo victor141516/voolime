@@ -20,6 +20,8 @@ internal static class NativeMethods
     public const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
     public const int DWMWCP_ROUND = 2;
     public const int DWMSBT_TRANSIENTWINDOW = 3;
+    public const int WCA_ACCENT_POLICY = 19;
+    public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
 
     private const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
@@ -78,6 +80,23 @@ internal static class NativeMethods
             new() { cbSize = Marshal.SizeOf<MONITORINFO>() };
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ACCENT_POLICY
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public int GradientColor;
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINDOWCOMPOSITIONATTRIBDATA
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
@@ -126,6 +145,9 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINDOWCOMPOSITIONATTRIBDATA data);
+
     [DllImport("user32.dll")]
     public static extern IntPtr MonitorFromWindow(IntPtr hwnd, int dwFlags);
 
@@ -152,6 +174,38 @@ internal static class NativeMethods
 
     [DllImport("dwmapi.dll", PreserveSig = true)]
     public static extern int DwmGetColorizationColor(out uint colorizationColor, out bool colorizationOpaqueBlend);
+
+    public static bool TryEnableAcrylicBlur(IntPtr hwnd, byte alpha, byte red, byte green, byte blue)
+    {
+        var accent = new ACCENT_POLICY
+        {
+            AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND,
+            AccentFlags = 2,
+            GradientColor = (alpha << 24) | (blue << 16) | (green << 8) | red
+        };
+
+        var accentSize = Marshal.SizeOf<ACCENT_POLICY>();
+        var accentPtr = Marshal.AllocHGlobal(accentSize);
+        try
+        {
+            Marshal.StructureToPtr(accent, accentPtr, false);
+            var data = new WINDOWCOMPOSITIONATTRIBDATA
+            {
+                Attribute = WCA_ACCENT_POLICY,
+                Data = accentPtr,
+                SizeOfData = accentSize
+            };
+            return SetWindowCompositionAttribute(hwnd, ref data) != 0;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(accentPtr);
+        }
+    }
 
     public static string? TryGetProcessImagePath(int processId)
     {
