@@ -9,7 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Voolime</AssemblyName>
     <RootNamespace>Voolime</RootNamespace>
-    <Version>0.4.4</Version>
+    <Version>0.4.5</Version>
     <Authors>Voolime</Authors>
     <Product>Voolime</Product>
     <Description>Per-app volume hotkeys for the active Windows application.</Description>

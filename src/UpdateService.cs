@@ -186,9 +186,18 @@ internal sealed class UpdateService
         $log = '{{escapedUpdaterLog}}'
         $script = '{{escapedScript}}'
         function Write-UpdaterLog([string] $message) {
-            $directory = Split-Path -LiteralPath $log -Parent
-            New-Item -ItemType Directory -Path $directory -Force | Out-Null
-            Add-Content -LiteralPath $log -Value "$(Get-Date -Format o) $message"
+            try {
+                $directory = [System.IO.Path]::GetDirectoryName($log)
+                if (-not [string]::IsNullOrWhiteSpace($directory)) {
+                    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+                }
+
+                [System.IO.File]::AppendAllText(
+                    $log,
+                    "$(Get-Date -Format o) $message$([System.Environment]::NewLine)")
+            }
+            catch {
+            }
         }
 
         try {
@@ -239,13 +248,20 @@ internal sealed class UpdateService
 
     private static void LaunchUpdater(string scriptPath)
     {
-        Process.Start(new ProcessStartInfo
+        var process = Process.Start(new ProcessStartInfo
         {
             FileName = "powershell.exe",
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"",
+            Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
             UseShellExecute = false,
             CreateNoWindow = true
         });
+
+        if (process is null)
+        {
+            throw new InvalidOperationException("The updater helper process could not be started.");
+        }
+
+        AppLogger.Info($"Updater helper process started with PID {process.Id}.");
     }
 
     private static void PromptForManualDownload(string assetUrl, string? releaseUrl)
