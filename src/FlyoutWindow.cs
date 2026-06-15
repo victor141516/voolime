@@ -26,6 +26,8 @@ internal sealed class FlyoutWindow : Window
     private readonly ColumnDefinition _emptyColumn;
     private readonly Border _fillBar;
     private readonly DispatcherTimer _hideTimer;
+    private double _shownTop;
+    private double _hiddenTop;
 
     public FlyoutWindow()
     {
@@ -56,7 +58,7 @@ internal sealed class FlyoutWindow : Window
         _hideTimer.Tick += (_, _) =>
         {
             _hideTimer.Stop();
-            FadeOut();
+            SlideOut();
         };
     }
 
@@ -74,14 +76,17 @@ internal sealed class FlyoutWindow : Window
 
         if (!IsVisible)
         {
-            Opacity = 0;
+            BeginAnimation(TopProperty, null);
+            BeginAnimation(OpacityProperty, null);
+            Top = _hiddenTop;
+            Opacity = 1;
             Show();
+            SlideIn();
         }
-
-        BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(80))
+        else
         {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        });
+            SlideToShownPosition();
+        }
 
         _hideTimer.Stop();
         _hideTimer.Start();
@@ -129,23 +134,47 @@ internal sealed class FlyoutWindow : Window
         const double marginPx = 28;
 
         Left = (info.rcWork.Left + (info.rcWork.Width - widthPx) / 2) / scale;
-        Top = (info.rcWork.Bottom - marginPx - heightPx) / scale;
+        _shownTop = (info.rcWork.Bottom - marginPx - heightPx) / scale;
+        _hiddenTop = info.rcMonitor.Bottom / scale;
     }
 
-    private void FadeOut()
+    private void SlideIn()
     {
-        var animation = new DoubleAnimation(0, TimeSpan.FromMilliseconds(180))
+        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(170))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        BeginAnimation(TopProperty, animation);
+    }
+
+    private void SlideToShownPosition()
+    {
+        BeginAnimation(OpacityProperty, null);
+        Opacity = 1;
+
+        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(110))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        BeginAnimation(TopProperty, animation);
+    }
+
+    private void SlideOut()
+    {
+        BeginAnimation(TopProperty, null);
+
+        var animation = new DoubleAnimation(_hiddenTop, TimeSpan.FromMilliseconds(190))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
         };
         animation.Completed += (_, _) =>
         {
-            if (Opacity <= 0.01)
+            if (Top >= _hiddenTop - 1)
             {
                 Hide();
             }
         };
-        BeginAnimation(OpacityProperty, animation);
+        BeginAnimation(TopProperty, animation);
     }
 
     private static (FrameworkElement Content, WpfImage Icon, TextBlock ValueText, Border Root, Border TrackBar, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar) BuildContent()
