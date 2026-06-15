@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
@@ -13,6 +14,12 @@ internal sealed class UpdateService
 {
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/victor141516/voolime/releases/latest";
     private const string ExeAssetName = "Voolime.exe";
+    private const string ApplyUpdateArgument = "--voolime-apply-update";
+    private const string SourceArgument = "--source";
+    private const string TargetArgument = "--target";
+    private const string PreviousPidArgument = "--previous-pid";
+    private static readonly TimeSpan PreviousProcessWaitTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReplaceRetryTimeout = TimeSpan.FromSeconds(30);
     private readonly HttpClient _httpClient = new();
 
     public UpdateService()
@@ -101,8 +108,7 @@ internal sealed class UpdateService
             try
             {
                 var downloadedPath = await DownloadUpdateAsync(asset.BrowserDownloadUrl!);
-                var scriptPath = CreateUpdaterScript(downloadedPath);
-                LaunchUpdater(scriptPath);
+                LaunchUpdater(downloadedPath);
                 AppLogger.Info("Updater helper launched. Shutting down current app.");
                 await application.Dispatcher.InvokeAsync(application.Shutdown);
             }
@@ -163,105 +169,180 @@ internal sealed class UpdateService
         }
     }
 
-    private static string CreateUpdaterScript(string downloadedPath)
+    private static void LaunchUpdater(string downloadedPath)
     {
         var currentPath = Environment.ProcessPath
             ?? throw new InvalidOperationException("The current executable path could not be resolved.");
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"VoolimeUpdate-{Guid.NewGuid():N}.ps1");
-        var updaterLogPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Voolime",
-            "Logs",
-            "updater.log");
-        var currentPid = Environment.ProcessId;
-        var escapedCurrent = EscapePowerShellString(currentPath);
-        var escapedDownloaded = EscapePowerShellString(downloadedPath);
-        var escapedScript = EscapePowerShellString(scriptPath);
-        var escapedUpdaterLog = EscapePowerShellString(updaterLogPath);
-
-        var script = $$"""
-        $ErrorActionPreference = 'Stop'
-        $current = '{{escapedCurrent}}'
-        $downloaded = '{{escapedDownloaded}}'
-        $log = '{{escapedUpdaterLog}}'
-        $script = '{{escapedScript}}'
-        function Write-UpdaterLog([string] $message) {
-            try {
-                $directory = [System.IO.Path]::GetDirectoryName($log)
-                if (-not [string]::IsNullOrWhiteSpace($directory)) {
-                    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
-                }
-
-                [System.IO.File]::AppendAllText(
-                    $log,
-                    "$(Get-Date -Format o) $message$([System.Environment]::NewLine)")
-            }
-            catch {
-            }
-        }
-
-        try {
-            Write-UpdaterLog "Updater started. Current: $current. Downloaded: $downloaded."
-            try {
-                Wait-Process -Id {{currentPid}} -Timeout 30 -ErrorAction Stop
-                Write-UpdaterLog "Previous process exited."
-            }
-            catch {
-                if (Get-Process -Id {{currentPid}} -ErrorAction SilentlyContinue) {
-                    throw
-                }
-                Write-UpdaterLog "Previous process was already closed."
-            }
-
-            $deadline = (Get-Date).AddSeconds(30)
-            do {
-                try {
-                    Copy-Item -LiteralPath $downloaded -Destination $current -Force
-                    Write-UpdaterLog "Executable replaced."
-                    break
-                }
-                catch {
-                    if ((Get-Date) -ge $deadline) {
-                        throw
-                    }
-                    Start-Sleep -Milliseconds 250
-                }
-            } while ($true)
-
-            Start-Process -FilePath $current
-            Write-UpdaterLog "Updated app launched."
-        }
-        catch {
-            Write-UpdaterLog "Updater failed: $($_.Exception.ToString())"
-            throw
-        }
-        finally {
-            Remove-Item -LiteralPath $downloaded -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue
-        }
-        """;
-
-        File.WriteAllText(scriptPath, script);
-        AppLogger.Info($"Updater script created at {scriptPath}.");
-        return scriptPath;
-    }
-
-    private static void LaunchUpdater(string scriptPath)
-    {
-        var process = Process.Start(new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
+            FileName = downloadedPath,
             UseShellExecute = false,
             CreateNoWindow = true
-        });
+        };
+        startInfo.ArgumentList.Add(ApplyUpdateArgument);
+        startInfo.ArgumentList.Add(SourceArgument);
+        startInfo.ArgumentList.Add(downloadedPath);
+        startInfo.ArgumentList.Add(TargetArgument);
+        startInfo.ArgumentList.Add(currentPath);
+        startInfo.ArgumentList.Add(PreviousPidArgument);
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+
+        var process = Process.Start(startInfo);
 
         if (process is null)
         {
             throw new InvalidOperationException("The updater helper process could not be started.");
         }
 
-        AppLogger.Info($"Updater helper process started with PID {process.Id}.");
+        AppLogger.Info($"Updater helper process started from {downloadedPath} with PID {process.Id}.");
+    }
+
+    public static bool IsUpdaterCommand(IReadOnlyList<string> args) =>
+        args.Any(static arg => string.Equals(arg, ApplyUpdateArgument, StringComparison.Ordinal));
+
+    public static int RunUpdaterCommand(IReadOnlyList<string> args)
+    {
+        try
+        {
+            var command = ParseUpdaterCommand(args);
+            ApplyUpdate(command);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            WriteUpdaterLog($"Updater failed: {ex}");
+            return 1;
+        }
+    }
+
+    private static UpdaterCommand ParseUpdaterCommand(IReadOnlyList<string> args)
+    {
+        var sourcePath = ReadArgument(args, SourceArgument);
+        var targetPath = ReadArgument(args, TargetArgument);
+        var previousPidValue = ReadArgument(args, PreviousPidArgument);
+
+        if (!int.TryParse(previousPidValue, NumberStyles.None, CultureInfo.InvariantCulture, out var previousPid))
+        {
+            throw new InvalidOperationException("The updater command contains an invalid previous process ID.");
+        }
+
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        {
+            throw new InvalidOperationException("The updater source executable could not be found.");
+        }
+
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            throw new InvalidOperationException("The updater target executable was not provided.");
+        }
+
+        return new UpdaterCommand(sourcePath, targetPath, previousPid);
+    }
+
+    private static string ReadArgument(IReadOnlyList<string> args, string name)
+    {
+        for (var index = 0; index < args.Count - 1; index++)
+        {
+            if (string.Equals(args[index], name, StringComparison.Ordinal))
+            {
+                return args[index + 1];
+            }
+        }
+
+        throw new InvalidOperationException($"Missing updater argument {name}.");
+    }
+
+    private static void ApplyUpdate(UpdaterCommand command)
+    {
+        WriteUpdaterLog(
+            $"Updater started. Target: {command.TargetPath}. Source: {command.SourcePath}. Previous PID: {command.PreviousPid}.");
+        WaitForPreviousProcess(command.PreviousPid);
+        ReplaceExecutable(command.SourcePath, command.TargetPath);
+        WriteUpdaterLog("Executable replaced.");
+
+        var updatedStartInfo = new ProcessStartInfo
+        {
+            FileName = command.TargetPath,
+            WorkingDirectory = Path.GetDirectoryName(command.TargetPath) ?? string.Empty,
+            UseShellExecute = false
+        };
+        if (Process.Start(updatedStartInfo) is null)
+        {
+            throw new InvalidOperationException("The updated app could not be launched.");
+        }
+
+        WriteUpdaterLog("Updated app launched.");
+    }
+
+    private static void WaitForPreviousProcess(int previousPid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(previousPid);
+            if (!process.WaitForExit((int)PreviousProcessWaitTimeout.TotalMilliseconds))
+            {
+                throw new TimeoutException("The previous Voolime process did not exit before the updater timeout.");
+            }
+
+            WriteUpdaterLog("Previous process exited.");
+        }
+        catch (ArgumentException)
+        {
+            WriteUpdaterLog("Previous process was already closed.");
+        }
+        catch (InvalidOperationException)
+        {
+            WriteUpdaterLog("Previous process was already closed.");
+        }
+    }
+
+    private static void ReplaceExecutable(string sourcePath, string targetPath)
+    {
+        var deadline = DateTimeOffset.Now.Add(ReplaceRetryTimeout);
+        Exception? lastError = null;
+
+        while (DateTimeOffset.Now < deadline)
+        {
+            try
+            {
+                File.Copy(sourcePath, targetPath, overwrite: true);
+                return;
+            }
+            catch (IOException ex)
+            {
+                lastError = ex;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                lastError = ex;
+            }
+
+            Thread.Sleep(250);
+        }
+
+        throw new IOException("The updater could not replace the executable before the timeout.", lastError);
+    }
+
+    private static void WriteUpdaterLog(string message)
+    {
+        try
+        {
+            var logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Voolime",
+                "Logs",
+                "updater.log");
+            var directory = Path.GetDirectoryName(logPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.AppendAllText(logPath, $"{DateTimeOffset.Now:o} {message}{Environment.NewLine}");
+        }
+        catch
+        {
+        }
     }
 
     private static void PromptForManualDownload(string assetUrl, string? releaseUrl)
@@ -296,9 +377,6 @@ internal sealed class UpdateService
     private static JsonSerializerOptions JsonOptions() =>
         new() { PropertyNameCaseInsensitive = true };
 
-    private static string EscapePowerShellString(string value) =>
-        value.Replace("'", "''", StringComparison.Ordinal);
-
     private sealed record GitHubRelease(
         [property: JsonPropertyName("tag_name")]
         string TagName,
@@ -312,4 +390,6 @@ internal sealed class UpdateService
         string Name,
         [property: JsonPropertyName("browser_download_url")]
         string? BrowserDownloadUrl);
+
+    private sealed record UpdaterCommand(string SourcePath, string TargetPath, int PreviousPid);
 }

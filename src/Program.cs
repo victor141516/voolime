@@ -7,8 +7,13 @@ namespace Voolime;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static int Main(string[] args)
     {
+        if (UpdateService.IsUpdaterCommand(args))
+        {
+            return UpdateService.RunUpdaterCommand(args);
+        }
+
         AppLogger.Initialize();
         AppLogger.Info("Voolime starting.");
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
@@ -18,7 +23,7 @@ internal static class Program
         if (!created)
         {
             AppLogger.Info("Another Voolime instance is already running.");
-            return;
+            return 0;
         }
 
         var app = new WpfApplication
@@ -34,5 +39,6 @@ internal static class Program
         };
         app.Run();
         AppLogger.Info("Voolime stopped.");
+        return 0;
     }
 }

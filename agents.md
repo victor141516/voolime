@@ -25,7 +25,7 @@ The normal Windows volume keys keep their default behavior. Voolime only handles
 - `AppController.cs` wires the app together. It owns the tray icon, context menu, hotkey service, active-window resolver, audio service, and flyout.
 - `AppLogger.cs` writes simple per-user logs to `%LOCALAPPDATA%\Voolime\Logs\voolime.log`.
 - `StartupShortcutService.cs` resolves the Startup folder once and creates or deletes the fixed `Voolime.lnk` shortcut.
-- `UpdateService.cs` checks GitHub Releases on startup and can launch a small PowerShell helper to replace the current executable after the app exits.
+- `UpdateService.cs` checks GitHub Releases on startup. For self-updates, it launches the downloaded `Voolime.exe` in an internal updater mode so the app can replace the previous executable after it exits without requiring PowerShell, cmd, an installer, or scheduled tasks.
 - `HotkeyService.cs` registers global keyboard hotkeys and installs low-level keyboard and mouse hooks. The keyboard hook catches media keys reliably when Windows does not route them through normal hotkey registration. The mouse hook handles configured modifier + mouse wheel volume changes.
 - `AppSettings.cs` persists user preferences under `HKCU\Software\Voolime`.
 - `ActiveWindowResolver.cs` identifies the active application from the foreground window, root window, visible child windows, process IDs, executable paths, and process names.
