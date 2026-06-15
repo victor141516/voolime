@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Diagnostics;
+using System.Reflection;
 using Forms = System.Windows.Forms;
 using WpfApplication = System.Windows.Application;
 
@@ -119,7 +120,23 @@ internal sealed class AppController : IDisposable
     }
 
     private string GetTrayText() =>
-        $"Voolime - keyboard: {GetModifierLabel(_hotkeys.KeyboardModifiers)}, mouse: {GetModifierLabel(_hotkeys.MouseModifiers)}";
+        $"Voolime {GetAppVersionLabel()} - key: {GetModifierLabel(_hotkeys.KeyboardModifiers)}, wheel: {GetModifierLabel(_hotkeys.MouseModifiers)}";
+
+    private static string GetAppVersionLabel()
+    {
+        var assembly = typeof(AppController).Assembly;
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            var metadataIndex = informationalVersion.IndexOf('+', StringComparison.Ordinal);
+            return metadataIndex >= 0
+                ? informationalVersion[..metadataIndex]
+                : informationalVersion;
+        }
+
+        var version = assembly.GetName().Version;
+        return version is null ? "0.0.0" : $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}";
+    }
 
     private void UpdateStartupShortcutCheck() =>
         _startWithWindowsItem.Checked = _startupShortcut.IsEnabled();
