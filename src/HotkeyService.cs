@@ -5,11 +5,13 @@ using System.Windows.Threading;
 
 namespace Voolime;
 
-internal enum ActivationModifier
+[Flags]
+internal enum ActivationModifiers
 {
-    Shift,
-    Control,
-    Alt
+    None = 0,
+    Shift = 1,
+    Control = 2,
+    Alt = 4
 }
 
 internal sealed record VolumeHotkeyPress(VolumeHotkeyKind Kind, bool IsHeldRepeat);
@@ -27,7 +29,9 @@ internal sealed class HotkeyService : IDisposable
     private const int WM_KEYUP = 0x0101;
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
+    private const int WM_MOUSEWHEEL = 0x020A;
     private const int WH_KEYBOARD_LL = 13;
+    private const int WH_MOUSE_LL = 14;
     private const int VK_CONTROL = 0x11;
     private const int VK_MENU = 0x12;
     private const int VK_SHIFT = 0x10;
@@ -39,15 +43,19 @@ internal sealed class HotkeyService : IDisposable
     private readonly Dispatcher _dispatcher;
     private readonly HwndSource _source;
     private readonly NativeMethods.LowLevelKeyboardProc _keyboardProc;
+    private readonly NativeMethods.LowLevelMouseProc _mouseProc;
     private readonly IntPtr _keyboardHook;
+    private readonly IntPtr _mouseHook;
     private readonly HashSet<int> _heldVolumeKeys = [];
-    private ActivationModifier _modifier;
+    private ActivationModifiers _keyboardModifiers;
+    private ActivationModifiers _mouseModifiers;
     private bool _disposed;
 
-    public HotkeyService(Action<VolumeHotkeyPress> handler, ActivationModifier modifier)
+    public HotkeyService(Action<VolumeHotkeyPress> handler, ActivationModifiers keyboardModifiers, ActivationModifiers mouseModifiers)
     {
         _handler = handler;
-        _modifier = modifier;
+        _keyboardModifiers = keyboardModifiers;
+        _mouseModifiers = mouseModifiers;
         _dispatcher = Dispatcher.CurrentDispatcher;
 
         var parameters = new HwndSourceParameters("VoolimeHotkeySink")
@@ -62,22 +70,29 @@ internal sealed class HotkeyService : IDisposable
         RegisterHotkeys();
 
         _keyboardProc = KeyboardHookCallback;
+        _mouseProc = MouseHookCallback;
         _keyboardHook = NativeMethods.SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, NativeMethods.GetModuleHandle(null), 0);
+        _mouseHook = NativeMethods.SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, NativeMethods.GetModuleHandle(null), 0);
     }
 
-    public ActivationModifier Modifier => _modifier;
+    public ActivationModifiers KeyboardModifiers => _keyboardModifiers;
 
-    public void SetModifier(ActivationModifier modifier)
+    public ActivationModifiers MouseModifiers => _mouseModifiers;
+
+    public void SetKeyboardModifiers(ActivationModifiers modifiers)
     {
-        if (_modifier == modifier)
+        if (_keyboardModifiers == modifiers)
         {
             return;
         }
 
         UnregisterHotkeys();
-        _modifier = modifier;
+        _keyboardModifiers = modifiers;
         RegisterHotkeys();
     }
+
+    public void SetMouseModifiers(ActivationModifiers modifiers) =>
+        _mouseModifiers = modifiers;
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
@@ -111,7 +126,7 @@ internal sealed class HotkeyService : IDisposable
                 return NativeMethods.CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
             }
 
-            if (IsKeyDown(wParam.ToInt32()) && IsVolumeKey(vkCode) && IsModifierDown(_modifier))
+            if (IsKeyDown(wParam.ToInt32()) && IsVolumeKey(vkCode) && AreModifiersDown(_keyboardModifiers))
             {
                 var kind = vkCode switch
                 {
@@ -129,6 +144,22 @@ internal sealed class HotkeyService : IDisposable
         return NativeMethods.CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
     }
 
+    private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && wParam.ToInt32() == WM_MOUSEWHEEL && AreModifiersDown(_mouseModifiers))
+        {
+            var info = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+            var wheelDelta = unchecked((short)((info.mouseData >> 16) & 0xFFFF));
+            if (wheelDelta != 0)
+            {
+                Dispatch(wheelDelta > 0 ? VolumeHotkeyKind.Up : VolumeHotkeyKind.Down, isHeldRepeat: false);
+                return new IntPtr(1);
+            }
+        }
+
+        return NativeMethods.CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+    }
+
     private static bool IsVolumeKey(int vkCode) =>
         vkCode is VK_VOLUME_UP or VK_VOLUME_DOWN or VK_VOLUME_MUTE;
 
@@ -138,28 +169,50 @@ internal sealed class HotkeyService : IDisposable
     private static bool IsKeyUp(int message) =>
         message is WM_KEYUP or WM_SYSKEYUP;
 
-    private static bool IsModifierDown(ActivationModifier modifier) =>
-        (NativeMethods.GetAsyncKeyState(GetVirtualKey(modifier)) & 0x8000) != 0;
-
-    private static int GetVirtualKey(ActivationModifier modifier) =>
-        modifier switch
+    private static bool AreModifiersDown(ActivationModifiers modifiers)
+    {
+        if (modifiers == ActivationModifiers.None)
         {
-            ActivationModifier.Control => VK_CONTROL,
-            ActivationModifier.Alt => VK_MENU,
-            _ => VK_SHIFT
-        };
+            return false;
+        }
 
-    private static int GetHotkeyModifier(ActivationModifier modifier) =>
-        modifier switch
+        return (!modifiers.HasFlag(ActivationModifiers.Shift) || IsKeyPressed(VK_SHIFT)) &&
+               (!modifiers.HasFlag(ActivationModifiers.Control) || IsKeyPressed(VK_CONTROL)) &&
+               (!modifiers.HasFlag(ActivationModifiers.Alt) || IsKeyPressed(VK_MENU));
+    }
+
+    private static bool IsKeyPressed(int virtualKey) =>
+        (NativeMethods.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
+    private static int GetHotkeyModifier(ActivationModifiers modifiers)
+    {
+        var hotkeyModifier = 0;
+        if (modifiers.HasFlag(ActivationModifiers.Shift))
         {
-            ActivationModifier.Control => MOD_CONTROL,
-            ActivationModifier.Alt => MOD_ALT,
-            _ => MOD_SHIFT
-        };
+            hotkeyModifier |= MOD_SHIFT;
+        }
+
+        if (modifiers.HasFlag(ActivationModifiers.Control))
+        {
+            hotkeyModifier |= MOD_CONTROL;
+        }
+
+        if (modifiers.HasFlag(ActivationModifiers.Alt))
+        {
+            hotkeyModifier |= MOD_ALT;
+        }
+
+        return hotkeyModifier;
+    }
 
     private void RegisterHotkeys()
     {
-        var modifier = GetHotkeyModifier(_modifier);
+        if (_keyboardModifiers == ActivationModifiers.None)
+        {
+            return;
+        }
+
+        var modifier = GetHotkeyModifier(_keyboardModifiers);
         NativeMethods.RegisterHotKey(_source.Handle, HotkeyVolumeDown, modifier, VK_VOLUME_DOWN);
         NativeMethods.RegisterHotKey(_source.Handle, HotkeyVolumeUp, modifier, VK_VOLUME_UP);
         NativeMethods.RegisterHotKey(_source.Handle, HotkeyVolumeMute, modifier, VK_VOLUME_MUTE);
@@ -188,6 +241,11 @@ internal sealed class HotkeyService : IDisposable
         if (_keyboardHook != IntPtr.Zero)
         {
             NativeMethods.UnhookWindowsHookEx(_keyboardHook);
+        }
+
+        if (_mouseHook != IntPtr.Zero)
+        {
+            NativeMethods.UnhookWindowsHookEx(_mouseHook);
         }
 
         _source.Dispose();

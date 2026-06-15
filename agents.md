@@ -4,16 +4,17 @@
 
 Voolime is a small Windows background application that changes the volume of the currently active application instead of the global system volume.
 
-The normal Windows volume keys keep their default behavior. Voolime only handles volume keys when the configured activation key is held. The activation key is configurable from the tray context menu and can be Shift, Control, or Alt.
+The normal Windows volume keys keep their default behavior. Voolime only handles volume keys or mouse wheel input when the configured activation keys are held. Keyboard and mouse activation keys are configurable independently from the tray context menu and can use Shift, Control, Alt, any combination of them, or none. Selecting no modifiers disables that input mode.
 
 ## User-Facing Behavior
 
 - The app runs in the background and exposes a tray icon.
-- The tray context menu contains an `Activation key` submenu and an `Exit` command.
+- The tray context menu contains `Keyboard Activation Key`, `Mouse Activation Key`, `Start with Windows`, and `Exit`.
 - The tray context menu contains `Start with Windows`, which toggles a fixed `Voolime.lnk` shortcut in the current user's Startup folder.
-- The tray context menu contains `Open Legacy Volume Mixer`, which opens the Win32 `sndvol.exe` mixer.
+- The tray context menu contains `Open Volume Mixer`, which opens the Win32 `sndvol.exe` mixer.
 - The tray context menu contains `Open Playback and Recording Devices`, which opens the legacy Control Panel Sound dialog through `mmsys.cpl`.
-- The active app volume changes when the configured activation key is held while pressing Volume Up, Volume Down, or Mute.
+- The active app volume changes when the configured keyboard activation key is held while pressing Volume Up, Volume Down, or Mute.
+- The active app volume changes when the configured mouse activation key is held while using the mouse wheel.
 - Single key presses adjust app volume by 0.5%. Held key repeat events adjust volume by 2% after the first press.
 - A compact Windows 11-style flyout appears near the bottom center of the active monitor.
 - The flyout follows the Windows app theme. It uses a light background in light mode, a dark background in dark mode, and the Windows accent color for the active volume bar.
@@ -25,7 +26,7 @@ The normal Windows volume keys keep their default behavior. Voolime only handles
 - `AppLogger.cs` writes simple per-user logs to `%LOCALAPPDATA%\Voolime\Logs\voolime.log`.
 - `StartupShortcutService.cs` resolves the Startup folder once and creates or deletes the fixed `Voolime.lnk` shortcut.
 - `UpdateService.cs` checks GitHub Releases on startup and can launch a small PowerShell helper to replace the current executable after the app exits.
-- `HotkeyService.cs` registers global hotkeys and also installs a low-level keyboard hook. The hook catches media keys reliably when Windows does not route them through normal hotkey registration.
+- `HotkeyService.cs` registers global keyboard hotkeys and installs low-level keyboard and mouse hooks. The keyboard hook catches media keys reliably when Windows does not route them through normal hotkey registration. The mouse hook handles configured modifier + mouse wheel volume changes.
 - `AppSettings.cs` persists user preferences under `HKCU\Software\Voolime`.
 - `ActiveWindowResolver.cs` identifies the active application from the foreground window, root window, visible child windows, process IDs, executable paths, and process names.
 - `AudioSessionService.cs` enumerates Core Audio render sessions and matches them to the active app. Matching uses exact process ID, executable path, process name, audio session display name, and related renderer/helper processes in the same app directory.

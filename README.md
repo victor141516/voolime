@@ -5,8 +5,10 @@ Voolime is a tiny Windows background app that changes the volume of the app you 
 - `Shift + Volume Up`: raises the active app volume by default.
 - `Shift + Volume Down`: lowers the active app volume by default.
 - `Shift + Mute`: toggles mute for the active app by default.
+- `Control + Shift + Mouse Wheel`: raises or lowers the active app volume by default.
 - Normal volume keys keep controlling the global Windows volume.
-- The activation key can be changed from the tray menu to Shift, Control, or Alt.
+- Keyboard and mouse activation keys can be changed independently from the tray menu.
+- Each activation key can use Shift, Control, Alt, any combination of them, or none. Selecting none disables that input mode.
 - Single presses adjust volume by 0.5%. Holding a volume key accelerates subsequent repeat steps to 2%.
 - The tray menu can create or remove a visible `Voolime.lnk` shortcut in the current user's Startup folder.
 - The tray menu can open the legacy Windows Volume Mixer.

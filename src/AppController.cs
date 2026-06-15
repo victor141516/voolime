@@ -18,22 +18,24 @@ internal sealed class AppController : IDisposable
     private readonly Icon _appIcon;
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly Forms.ToolStripMenuItem _startWithWindowsItem;
-    private readonly Forms.ToolStripMenuItem _shiftModifierItem;
-    private readonly Forms.ToolStripMenuItem _controlModifierItem;
-    private readonly Forms.ToolStripMenuItem _altModifierItem;
+    private readonly ModifierMenuItems _keyboardModifierItems;
+    private readonly ModifierMenuItems _mouseModifierItems;
     private bool _disposed;
 
     public AppController(WpfApplication application)
     {
         _application = application;
         _appIcon = LoadAppIcon();
-        _hotkeys = new HotkeyService(HandleHotkey, AppSettings.LoadActivationModifier());
-        (_trayIcon, _startWithWindowsItem, _shiftModifierItem, _controlModifierItem, _altModifierItem) = CreateTrayIcon();
+        _hotkeys = new HotkeyService(
+            HandleHotkey,
+            AppSettings.LoadKeyboardActivationModifiers(),
+            AppSettings.LoadMouseActivationModifiers());
+        (_trayIcon, _startWithWindowsItem, _keyboardModifierItems, _mouseModifierItems) = CreateTrayIcon();
         UpdateModifierChecks();
         _updateService.CheckOnStartup(_application);
     }
 
-    private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem StartWithWindows, Forms.ToolStripMenuItem Shift, Forms.ToolStripMenuItem Control, Forms.ToolStripMenuItem Alt) CreateTrayIcon()
+    private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem StartWithWindows, ModifierMenuItems Keyboard, ModifierMenuItems Mouse) CreateTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
         menu.Opening += (_, _) => UpdateStartupShortcutCheck();
@@ -42,52 +44,82 @@ internal sealed class AppController : IDisposable
         {
             CheckOnClick = false
         };
-        menu.Items.Add(startWithWindows);
-        menu.Items.Add("Open Legacy Volume Mixer", null, (_, _) => OpenLegacyVolumeMixer());
+
+        menu.Items.Add("Open Volume Mixer", null, (_, _) => OpenLegacyVolumeMixer());
         menu.Items.Add("Open Playback and Recording Devices", null, (_, _) => OpenPlaybackAndRecordingDevices());
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        var activationKey = new Forms.ToolStripMenuItem("Activation key");
-        var shift = CreateModifierItem("Shift", ActivationModifier.Shift);
-        var control = CreateModifierItem("Control", ActivationModifier.Control);
-        var alt = CreateModifierItem("Alt", ActivationModifier.Alt);
-        activationKey.DropDownItems.AddRange(new Forms.ToolStripItem[] { shift, control, alt });
+        var keyboardModifiers = CreateModifierMenu("Keyboard Activation Key", ToggleKeyboardModifier);
+        var mouseModifiers = CreateModifierMenu("Mouse Activation Key", ToggleMouseModifier);
 
-        menu.Items.Add(activationKey);
+        menu.Items.Add(keyboardModifiers.Root);
+        menu.Items.Add(mouseModifiers.Root);
         menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add(startWithWindows);
         menu.Items.Add("Exit", null, (_, _) => _application.Shutdown());
 
         var trayIcon = new Forms.NotifyIcon
         {
             Icon = _appIcon,
-            Text = $"Voolime - {GetModifierLabel(_hotkeys.Modifier)}+volume adjusts the active app",
+            Text = GetTrayText(),
             ContextMenuStrip = menu,
             Visible = true
         };
 
-        return (trayIcon, startWithWindows, shift, control, alt);
+        return (trayIcon, startWithWindows, keyboardModifiers, mouseModifiers);
     }
 
-    private Forms.ToolStripMenuItem CreateModifierItem(string text, ActivationModifier modifier) =>
-        new(text, null, (_, _) => SetActivationModifier(modifier))
+    private static ModifierMenuItems CreateModifierMenu(string text, Action<ActivationModifiers> toggle)
+    {
+        var root = new Forms.ToolStripMenuItem(text);
+        var shift = CreateModifierItem("Shift", ActivationModifiers.Shift, toggle);
+        var control = CreateModifierItem("Control", ActivationModifiers.Control, toggle);
+        var alt = CreateModifierItem("Alt", ActivationModifiers.Alt, toggle);
+        root.DropDownItems.AddRange(new Forms.ToolStripItem[] { shift, control, alt });
+        return new ModifierMenuItems(root, shift, control, alt);
+    }
+
+    private static Forms.ToolStripMenuItem CreateModifierItem(string text, ActivationModifiers modifier, Action<ActivationModifiers> toggle) =>
+        new(text, null, (_, _) => toggle(modifier))
         {
             CheckOnClick = false
         };
 
-    private void SetActivationModifier(ActivationModifier modifier)
+    private void ToggleKeyboardModifier(ActivationModifiers modifier)
     {
-        _hotkeys.SetModifier(modifier);
-        AppSettings.SaveActivationModifier(modifier);
+        var modifiers = ToggleModifier(_hotkeys.KeyboardModifiers, modifier);
+        _hotkeys.SetKeyboardModifiers(modifiers);
+        AppSettings.SaveKeyboardActivationModifiers(modifiers);
         UpdateModifierChecks();
     }
 
+    private void ToggleMouseModifier(ActivationModifiers modifier)
+    {
+        var modifiers = ToggleModifier(_hotkeys.MouseModifiers, modifier);
+        _hotkeys.SetMouseModifiers(modifiers);
+        AppSettings.SaveMouseActivationModifiers(modifiers);
+        UpdateModifierChecks();
+    }
+
+    private static ActivationModifiers ToggleModifier(ActivationModifiers current, ActivationModifiers modifier) =>
+        current.HasFlag(modifier) ? current & ~modifier : current | modifier;
+
     private void UpdateModifierChecks()
     {
-        _shiftModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Shift;
-        _controlModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Control;
-        _altModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Alt;
-        _trayIcon.Text = $"Voolime - {GetModifierLabel(_hotkeys.Modifier)}+volume adjusts the active app";
+        UpdateModifierMenuChecks(_keyboardModifierItems, _hotkeys.KeyboardModifiers);
+        UpdateModifierMenuChecks(_mouseModifierItems, _hotkeys.MouseModifiers);
+        _trayIcon.Text = GetTrayText();
     }
+
+    private static void UpdateModifierMenuChecks(ModifierMenuItems items, ActivationModifiers modifiers)
+    {
+        items.Shift.Checked = modifiers.HasFlag(ActivationModifiers.Shift);
+        items.Control.Checked = modifiers.HasFlag(ActivationModifiers.Control);
+        items.Alt.Checked = modifiers.HasFlag(ActivationModifiers.Alt);
+    }
+
+    private string GetTrayText() =>
+        $"Voolime - keyboard: {GetModifierLabel(_hotkeys.KeyboardModifiers)}, mouse: {GetModifierLabel(_hotkeys.MouseModifiers)}";
 
     private void UpdateStartupShortcutCheck() =>
         _startWithWindowsItem.Checked = _startupShortcut.IsEnabled();
@@ -151,13 +183,31 @@ internal sealed class AppController : IDisposable
         }
     }
 
-    private static string GetModifierLabel(ActivationModifier modifier) =>
-        modifier switch
+    private static string GetModifierLabel(ActivationModifiers modifiers)
+    {
+        if (modifiers == ActivationModifiers.None)
         {
-            ActivationModifier.Control => "Ctrl",
-            ActivationModifier.Alt => "Alt",
-            _ => "Shift"
-        };
+            return "Off";
+        }
+
+        var parts = new List<string>();
+        if (modifiers.HasFlag(ActivationModifiers.Control))
+        {
+            parts.Add("Ctrl");
+        }
+
+        if (modifiers.HasFlag(ActivationModifiers.Shift))
+        {
+            parts.Add("Shift");
+        }
+
+        if (modifiers.HasFlag(ActivationModifiers.Alt))
+        {
+            parts.Add("Alt");
+        }
+
+        return string.Join("+", parts);
+    }
 
     private static Icon LoadAppIcon()
     {
@@ -244,4 +294,10 @@ internal sealed class AppController : IDisposable
         _appIcon.Dispose();
         _flyout.Close();
     }
+
+    private sealed record ModifierMenuItems(
+        Forms.ToolStripMenuItem Root,
+        Forms.ToolStripMenuItem Shift,
+        Forms.ToolStripMenuItem Control,
+        Forms.ToolStripMenuItem Alt);
 }
