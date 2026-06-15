@@ -13,8 +13,11 @@ internal sealed class AppController : IDisposable
     private readonly AudioSessionService _audio = new();
     private readonly FlyoutWindow _flyout = new();
     private readonly HotkeyService _hotkeys;
+    private readonly StartupShortcutService _startupShortcut = new();
+    private readonly UpdateService _updateService = new();
     private readonly Icon _appIcon;
     private readonly Forms.NotifyIcon _trayIcon;
+    private readonly Forms.ToolStripMenuItem _startWithWindowsItem;
     private readonly Forms.ToolStripMenuItem _shiftModifierItem;
     private readonly Forms.ToolStripMenuItem _controlModifierItem;
     private readonly Forms.ToolStripMenuItem _altModifierItem;
@@ -25,13 +28,24 @@ internal sealed class AppController : IDisposable
         _application = application;
         _appIcon = LoadAppIcon();
         _hotkeys = new HotkeyService(HandleHotkey, AppSettings.LoadActivationModifier());
-        (_trayIcon, _shiftModifierItem, _controlModifierItem, _altModifierItem) = CreateTrayIcon();
+        (_trayIcon, _startWithWindowsItem, _shiftModifierItem, _controlModifierItem, _altModifierItem) = CreateTrayIcon();
         UpdateModifierChecks();
+        _updateService.CheckOnStartup(_application);
     }
 
-    private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem Shift, Forms.ToolStripMenuItem Control, Forms.ToolStripMenuItem Alt) CreateTrayIcon()
+    private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem StartWithWindows, Forms.ToolStripMenuItem Shift, Forms.ToolStripMenuItem Control, Forms.ToolStripMenuItem Alt) CreateTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
+        menu.Opening += (_, _) => UpdateStartupShortcutCheck();
+
+        var startWithWindows = new Forms.ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleStartWithWindows())
+        {
+            CheckOnClick = false
+        };
+        menu.Items.Add(startWithWindows);
+        menu.Items.Add("Open Windows Volume Mixer", null, (_, _) => OpenWindowsVolumeMixer());
+        menu.Items.Add(new Forms.ToolStripSeparator());
+
         var activationKey = new Forms.ToolStripMenuItem("Activation key");
         var shift = CreateModifierItem("Shift", ActivationModifier.Shift);
         var control = CreateModifierItem("Control", ActivationModifier.Control);
@@ -50,7 +64,7 @@ internal sealed class AppController : IDisposable
             Visible = true
         };
 
-        return (trayIcon, shift, control, alt);
+        return (trayIcon, startWithWindows, shift, control, alt);
     }
 
     private Forms.ToolStripMenuItem CreateModifierItem(string text, ActivationModifier modifier) =>
@@ -72,6 +86,43 @@ internal sealed class AppController : IDisposable
         _controlModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Control;
         _altModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Alt;
         _trayIcon.Text = $"Voolime - {GetModifierLabel(_hotkeys.Modifier)}+volume adjusts the active app";
+    }
+
+    private void UpdateStartupShortcutCheck() =>
+        _startWithWindowsItem.Checked = _startupShortcut.IsEnabled();
+
+    private void ToggleStartWithWindows()
+    {
+        try
+        {
+            var enabled = _startupShortcut.Toggle();
+            _startWithWindowsItem.Checked = enabled;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Failed to toggle startup shortcut.", ex);
+            Forms.MessageBox.Show(
+                $"Could not update the startup shortcut.\n\n{ex.Message}",
+                "Voolime",
+                Forms.MessageBoxButtons.OK,
+                Forms.MessageBoxIcon.Error);
+            UpdateStartupShortcutCheck();
+        }
+    }
+
+    private static void OpenWindowsVolumeMixer()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("ms-settings:apps-volume") { UseShellExecute = true });
+            AppLogger.Info("Opened Windows Volume Mixer settings.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"Opening ms-settings:apps-volume failed: {ex.Message}");
+            Process.Start(new ProcessStartInfo("sndvol.exe") { UseShellExecute = true });
+            AppLogger.Info("Opened classic volume mixer.");
+        }
     }
 
     private static string GetModifierLabel(ActivationModifier modifier) =>
@@ -118,11 +169,13 @@ internal sealed class AppController : IDisposable
 
     private void HandleHotkey(VolumeHotkeyPress press)
     {
+        AppLogger.Info($"Hotkey received: {press.Kind}, held repeat: {press.IsHeldRepeat}.");
         _application.Dispatcher.Invoke(() =>
         {
             var target = _windowResolver.GetActiveTarget();
             if (target is null)
             {
+                AppLogger.Warn("No active window was detected for a hotkey press.");
                 _flyout.ShowStatus("No active window", "No app detected", 0, muted: false, null, IntPtr.Zero);
                 return;
             }
@@ -134,8 +187,11 @@ internal sealed class AppController : IDisposable
             }
             catch (Exception ex)
             {
+                AppLogger.Error("Volume change failed.", ex);
                 result = VolumeChangeResult.Failed(target.DisplayName, ex.Message);
             }
+
+            AppLogger.Info($"Volume result for {result.DisplayName}: {result.Message}, success: {result.Success}.");
 
             var icon = AppIconProvider.GetIcon(target.ProcessPath);
             _flyout.ShowStatus(

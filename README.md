@@ -8,6 +8,10 @@ Voolime is a tiny Windows background app that changes the volume of the app you 
 - Normal volume keys keep controlling the global Windows volume.
 - The activation key can be changed from the tray menu to Shift, Control, or Alt.
 - Single presses adjust volume by 0.5%. Holding a volume key accelerates subsequent repeat steps to 2%.
+- The tray menu can create or remove a visible `Voolime.lnk` shortcut in the current user's Startup folder.
+- The tray menu can open the native Windows Volume Mixer.
+- The app writes simple logs to `%LOCALAPPDATA%\Voolime\Logs\voolime.log`.
+- The app checks GitHub Releases for updates at startup and can replace the current executable when the location is writable.
 
 The app uses the Windows Core Audio session API and a small Windows 11-style flyout near the bottom center of the active monitor. The flyout follows the Windows light/dark app theme and uses the configured Windows accent color for the volume bar.
 

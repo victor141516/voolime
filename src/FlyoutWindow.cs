@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Windows.Interop;
@@ -12,7 +11,6 @@ using Microsoft.Win32;
 using MediaBrushes = System.Windows.Media.Brushes;
 using MediaColor = System.Windows.Media.Color;
 using MediaColorConverter = System.Windows.Media.ColorConverter;
-using MediaColors = System.Windows.Media.Colors;
 using WpfFontFamily = System.Windows.Media.FontFamily;
 using WpfImage = System.Windows.Controls.Image;
 
@@ -41,6 +39,8 @@ internal sealed class FlyoutWindow : Window
         ShowActivated = false;
         Topmost = true;
         Focusable = false;
+        SnapsToDevicePixels = true;
+        UseLayoutRounding = true;
 
         var (content, icon, valueText, root, trackBar, fill, empty, fillBar) = BuildContent();
         Content = content;
@@ -208,18 +208,12 @@ internal sealed class FlyoutWindow : Window
         var root = new Border
         {
             Background = BrushFrom("#EE202832"),
-            BorderBrush = BrushFrom("#3DFFFFFF"),
-            BorderThickness = new Thickness(1),
+            BorderBrush = MediaBrushes.Transparent,
+            BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(11),
+            ClipToBounds = true,
             Padding = new Thickness(16, 0, 16, 0),
-            Effect = new DropShadowEffect
-            {
-                BlurRadius = 18,
-                ShadowDepth = 2,
-                Direction = 270,
-                Opacity = 0.32,
-                Color = MediaColors.Black
-            },
+            SnapsToDevicePixels = true,
             Child = body
         };
 
@@ -281,8 +275,8 @@ internal sealed record FlyoutTheme(
         var isLight = IsLightAppTheme();
         return new FlyoutTheme(
             isLight,
-            isLight ? "#F3FFFFFF" : "#EE202832",
-            isLight ? "#26000000" : "#3DFFFFFF",
+            isLight ? "#FFF8F9FA" : "#FF202832",
+            "#00000000",
             isLight ? "#1F2933" : "#D2DCE6",
             isLight ? "#DDE5EC" : "#35414D",
             isLight ? "#8C98A4" : "#7C8792",
