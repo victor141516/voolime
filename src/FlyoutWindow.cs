@@ -21,6 +21,9 @@ internal sealed class FlyoutWindow : Window
     private const double FlyoutWidth = 304;
     private const double FlyoutHeight = 58;
     private const double BottomMargin = 34;
+    private static readonly TimeSpan EntryAnimationDuration = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan IdleVisibleDuration = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan ExitAnimationDuration = TimeSpan.FromMilliseconds(500);
 
     private readonly WpfImage _appIcon;
     private readonly TextBlock _valueText;
@@ -33,6 +36,7 @@ internal sealed class FlyoutWindow : Window
     private IntPtr _activeMonitor;
     private double _shownTop;
     private double _hiddenTop;
+    private int _animationVersion;
 
     public FlyoutWindow()
     {
@@ -59,11 +63,11 @@ internal sealed class FlyoutWindow : Window
         _emptyColumn = empty;
         _fillBar = fillBar;
 
-        _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1250) };
+        _hideTimer = new DispatcherTimer { Interval = IdleVisibleDuration };
         _hideTimer.Tick += (_, _) =>
         {
             _hideTimer.Stop();
-            SlideOut();
+            SlideOut(++_animationVersion);
         };
     }
 
@@ -78,6 +82,8 @@ internal sealed class FlyoutWindow : Window
         _emptyColumn.Width = new GridLength(Math.Max(1 - clamped, 0.001), GridUnitType.Star);
 
         PositionOnActiveMonitor(activeWindow);
+        _hideTimer.Stop();
+        var animationVersion = ++_animationVersion;
 
         if (!IsVisible)
         {
@@ -87,16 +93,13 @@ internal sealed class FlyoutWindow : Window
             Opacity = 1;
             Show();
             PlaceBehindTaskbar();
-            SlideIn();
+            SlideIn(animationVersion);
         }
         else
         {
             PlaceBehindTaskbar();
-            SlideToShownPosition();
+            SlideToShownPosition(animationVersion);
         }
-
-        _hideTimer.Stop();
-        _hideTimer.Start();
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -155,43 +158,60 @@ internal sealed class FlyoutWindow : Window
         }
     }
 
-    private void SlideIn()
+    private void SlideIn(int animationVersion)
     {
-        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(230))
+        var animation = new DoubleAnimation(_shownTop, EntryAnimationDuration)
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
+        animation.Completed += (_, _) => StartIdleTimer(animationVersion);
         BeginAnimation(TopProperty, animation);
     }
 
-    private void SlideToShownPosition()
+    private void SlideToShownPosition(int animationVersion)
     {
         BeginAnimation(OpacityProperty, null);
         Opacity = 1;
 
-        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(150))
+        var duration = Math.Abs(Top - _shownTop) < 1
+            ? TimeSpan.Zero
+            : EntryAnimationDuration;
+        var animation = new DoubleAnimation(_shownTop, duration)
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
+        animation.Completed += (_, _) => StartIdleTimer(animationVersion);
         BeginAnimation(TopProperty, animation);
     }
 
-    private void SlideOut()
+    private void SlideOut(int animationVersion)
     {
         BeginAnimation(TopProperty, null);
 
-        var animation = new DoubleAnimation(_hiddenTop, TimeSpan.FromMilliseconds(260))
+        var animation = new DoubleAnimation(_hiddenTop, ExitAnimationDuration)
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
         };
         animation.Completed += (_, _) =>
         {
-            if (Top >= _hiddenTop - 1)
+            if (animationVersion == _animationVersion && Top >= _hiddenTop - 1)
             {
                 Hide();
             }
         };
         BeginAnimation(TopProperty, animation);
+    }
+
+    private void StartIdleTimer(int animationVersion)
+    {
+        if (animationVersion != _animationVersion || !IsVisible)
+        {
+            return;
+        }
+
+        _hideTimer.Stop();
+        _hideTimer.Interval = IdleVisibleDuration;
+        _hideTimer.Start();
     }
 
     private static (FrameworkElement Content, WpfImage Icon, TextBlock ValueText, Border Root, Border TrackBar, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar) BuildContent()
