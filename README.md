@@ -20,10 +20,9 @@ Windows volume keys are global. Voolime makes them app-aware.
 
 - 🍋 Tiny. Built to stay small.
 - 🪟 Native. Feels like Windows 11.
-- ⌨️ Keyboard and mouse. Use keys or scroll.
+- ⌨️ Keyboard and mouse. Press `Shift + Volume Up`, or scroll.
 - 🎚️ Precise. Tap gently, hold to move fast.
 - ⚡ Simple. Right-click the tray icon for options.
-- 💡 Try it. Hold `Shift` and press `Volume Up`.
 
 ## Preview
 
