@@ -20,7 +20,7 @@ internal sealed class FlyoutWindow : Window
 {
     private const double FlyoutWidth = 304;
     private const double FlyoutHeight = 58;
-    private const double BottomGap = 34;
+    private const double BottomMargin = 34;
 
     private readonly WpfImage _appIcon;
     private readonly TextBlock _valueText;
@@ -29,14 +29,14 @@ internal sealed class FlyoutWindow : Window
     private readonly ColumnDefinition _fillColumn;
     private readonly ColumnDefinition _emptyColumn;
     private readonly Border _fillBar;
-    private readonly TranslateTransform _slideTransform;
     private readonly DispatcherTimer _hideTimer;
-    private double _hiddenOffset;
+    private double _shownTop;
+    private double _hiddenTop;
 
     public FlyoutWindow()
     {
         Width = FlyoutWidth;
-        Height = FlyoutHeight + BottomGap;
+        Height = FlyoutHeight;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         AllowsTransparency = true;
@@ -48,7 +48,7 @@ internal sealed class FlyoutWindow : Window
         SnapsToDevicePixels = true;
         UseLayoutRounding = true;
 
-        var (content, icon, valueText, root, trackBar, fill, empty, fillBar, slideTransform) = BuildContent();
+        var (content, icon, valueText, root, trackBar, fill, empty, fillBar) = BuildContent();
         Content = content;
         _appIcon = icon;
         _valueText = valueText;
@@ -57,8 +57,6 @@ internal sealed class FlyoutWindow : Window
         _fillColumn = fill;
         _emptyColumn = empty;
         _fillBar = fillBar;
-        _slideTransform = slideTransform;
-        _hiddenOffset = Height;
 
         _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1250) };
         _hideTimer.Tick += (_, _) =>
@@ -82,9 +80,9 @@ internal sealed class FlyoutWindow : Window
 
         if (!IsVisible)
         {
-            _slideTransform.BeginAnimation(TranslateTransform.YProperty, null);
+            BeginAnimation(TopProperty, null);
             BeginAnimation(OpacityProperty, null);
-            _slideTransform.Y = _hiddenOffset;
+            Top = _hiddenTop;
             Opacity = 1;
             Show();
             SlideIn();
@@ -137,19 +135,20 @@ internal sealed class FlyoutWindow : Window
         var scale = dpi / 96.0;
         var widthPx = Width * scale;
         var heightPx = Height * scale;
+        var marginPx = BottomMargin * scale;
 
         Left = (info.rcWork.Left + (info.rcWork.Width - widthPx) / 2) / scale;
-        Top = (info.rcWork.Bottom - heightPx) / scale;
-        _hiddenOffset = Height;
+        _shownTop = (info.rcWork.Bottom - marginPx - heightPx) / scale;
+        _hiddenTop = info.rcMonitor.Bottom / scale;
     }
 
     private void SlideIn()
     {
-        var animation = new DoubleAnimation(0, TimeSpan.FromMilliseconds(170))
+        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(170))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
-        _slideTransform.BeginAnimation(TranslateTransform.YProperty, animation);
+        BeginAnimation(TopProperty, animation);
     }
 
     private void SlideToShownPosition()
@@ -157,32 +156,32 @@ internal sealed class FlyoutWindow : Window
         BeginAnimation(OpacityProperty, null);
         Opacity = 1;
 
-        var animation = new DoubleAnimation(0, TimeSpan.FromMilliseconds(110))
+        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(110))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
-        _slideTransform.BeginAnimation(TranslateTransform.YProperty, animation);
+        BeginAnimation(TopProperty, animation);
     }
 
     private void SlideOut()
     {
-        _slideTransform.BeginAnimation(TranslateTransform.YProperty, null);
+        BeginAnimation(TopProperty, null);
 
-        var animation = new DoubleAnimation(_hiddenOffset, TimeSpan.FromMilliseconds(190))
+        var animation = new DoubleAnimation(_hiddenTop, TimeSpan.FromMilliseconds(190))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
         };
         animation.Completed += (_, _) =>
         {
-            if (_slideTransform.Y >= _hiddenOffset - 1)
+            if (Top >= _hiddenTop - 1)
             {
                 Hide();
             }
         };
-        _slideTransform.BeginAnimation(TranslateTransform.YProperty, animation);
+        BeginAnimation(TopProperty, animation);
     }
 
-    private static (FrameworkElement Content, WpfImage Icon, TextBlock ValueText, Border Root, Border TrackBar, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar, TranslateTransform SlideTransform) BuildContent()
+    private static (FrameworkElement Content, WpfImage Icon, TextBlock ValueText, Border Root, Border TrackBar, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar) BuildContent()
     {
         var fill = new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) };
         var empty = new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) };
@@ -239,12 +238,10 @@ internal sealed class FlyoutWindow : Window
         Grid.SetColumn(valueText, 2);
         body.Children.Add(valueText);
 
-        var slideTransform = new TranslateTransform();
         var root = new Border
         {
             Width = FlyoutWidth,
             Height = FlyoutHeight,
-            VerticalAlignment = VerticalAlignment.Top,
             Background = BrushFrom("#EE202832"),
             BorderBrush = MediaBrushes.Transparent,
             BorderThickness = new Thickness(0),
@@ -252,20 +249,10 @@ internal sealed class FlyoutWindow : Window
             ClipToBounds = true,
             Padding = new Thickness(16, 0, 16, 0),
             SnapsToDevicePixels = true,
-            RenderTransform = slideTransform,
             Child = body
         };
 
-        var host = new Grid
-        {
-            Width = FlyoutWidth,
-            Height = FlyoutHeight + BottomGap,
-            Background = MediaBrushes.Transparent,
-            ClipToBounds = true
-        };
-        host.Children.Add(root);
-
-        return (host, icon, valueText, root, trackBar, fill, empty, fillBar, slideTransform);
+        return (root, icon, valueText, root, trackBar, fill, empty, fillBar);
     }
 
     private void ApplyTheme(bool muted)
