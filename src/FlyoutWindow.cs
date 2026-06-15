@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using Drawing = System.Drawing;
+using Microsoft.Win32;
 using MediaBrushes = System.Windows.Media.Brushes;
 using MediaColor = System.Windows.Media.Color;
 using MediaColorConverter = System.Windows.Media.ColorConverter;
@@ -21,6 +22,8 @@ internal sealed class FlyoutWindow : Window
 {
     private readonly WpfImage _appIcon;
     private readonly TextBlock _valueText;
+    private readonly Border _root;
+    private readonly Border _trackBar;
     private readonly ColumnDefinition _fillColumn;
     private readonly ColumnDefinition _emptyColumn;
     private readonly Border _fillBar;
@@ -39,10 +42,12 @@ internal sealed class FlyoutWindow : Window
         Topmost = true;
         Focusable = false;
 
-        var (content, icon, valueText, fill, empty, fillBar) = BuildContent();
+        var (content, icon, valueText, root, trackBar, fill, empty, fillBar) = BuildContent();
         Content = content;
         _appIcon = icon;
         _valueText = valueText;
+        _root = root;
+        _trackBar = trackBar;
         _fillColumn = fill;
         _emptyColumn = empty;
         _fillBar = fillBar;
@@ -59,7 +64,7 @@ internal sealed class FlyoutWindow : Window
     {
         _appIcon.Source = icon ?? AppIconProvider.GetFallbackIcon();
         _valueText.Text = FormatValue(message, volume, muted);
-        _fillBar.Background = muted ? BrushFrom("#7C8792") : BrushFrom("#8FBFE8");
+        ApplyTheme(muted);
 
         var clamped = Math.Clamp(volume, 0, 1);
         _fillColumn.Width = new GridLength(Math.Max(clamped, 0.001), GridUnitType.Star);
@@ -101,6 +106,8 @@ internal sealed class FlyoutWindow : Window
 
         var backdrop = NativeMethods.DWMSBT_TRANSIENTWINDOW;
         NativeMethods.DwmSetWindowAttribute(hwnd, NativeMethods.DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, sizeof(int));
+
+        ApplyTheme(muted: false);
     }
 
     private void PositionOnActiveMonitor(IntPtr activeWindow)
@@ -141,7 +148,7 @@ internal sealed class FlyoutWindow : Window
         BeginAnimation(OpacityProperty, animation);
     }
 
-    private static (FrameworkElement Root, WpfImage Icon, TextBlock ValueText, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar) BuildContent()
+    private static (FrameworkElement Content, WpfImage Icon, TextBlock ValueText, Border Root, Border TrackBar, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar) BuildContent()
     {
         var fill = new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) };
         var empty = new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) };
@@ -160,12 +167,13 @@ internal sealed class FlyoutWindow : Window
         };
         meter.ColumnDefinitions.Add(fill);
         meter.ColumnDefinitions.Add(empty);
-        meter.Children.Add(new Border
+        var trackBar = new Border
         {
             Background = BrushFrom("#35414D"),
             CornerRadius = new CornerRadius(2.5)
-        });
-        Grid.SetColumnSpan(meter.Children[0], 2);
+        };
+        meter.Children.Add(trackBar);
+        Grid.SetColumnSpan(trackBar, 2);
         meter.Children.Add(fillBar);
 
         var icon = new WpfImage
@@ -215,7 +223,24 @@ internal sealed class FlyoutWindow : Window
             Child = body
         };
 
-        return (root, icon, valueText, fill, empty, fillBar);
+        return (root, icon, valueText, root, trackBar, fill, empty, fillBar);
+    }
+
+    private void ApplyTheme(bool muted)
+    {
+        var theme = FlyoutTheme.Read();
+        _root.Background = BrushFrom(theme.Background);
+        _root.BorderBrush = BrushFrom(theme.Border);
+        _valueText.Foreground = BrushFrom(theme.Text);
+        _trackBar.Background = BrushFrom(theme.Track);
+        _fillBar.Background = BrushFrom(muted ? theme.MutedFill : theme.Accent);
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+        {
+            var darkMode = theme.IsLight ? 0 : 1;
+            NativeMethods.DwmSetWindowAttribute(hwnd, NativeMethods.DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+        }
     }
 
     private static string FormatValue(string message, double volume, bool muted)
@@ -240,6 +265,48 @@ internal sealed class FlyoutWindow : Window
         return brush;
     }
 
+}
+
+internal sealed record FlyoutTheme(
+    bool IsLight,
+    string Background,
+    string Border,
+    string Text,
+    string Track,
+    string MutedFill,
+    string Accent)
+{
+    public static FlyoutTheme Read()
+    {
+        var isLight = IsLightAppTheme();
+        return new FlyoutTheme(
+            isLight,
+            isLight ? "#F3FFFFFF" : "#EE202832",
+            isLight ? "#26000000" : "#3DFFFFFF",
+            isLight ? "#1F2933" : "#D2DCE6",
+            isLight ? "#DDE5EC" : "#35414D",
+            isLight ? "#8C98A4" : "#7C8792",
+            GetAccentColor());
+    }
+
+    private static bool IsLightAppTheme()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        return key?.GetValue("AppsUseLightTheme") is not int value || value != 0;
+    }
+
+    private static string GetAccentColor()
+    {
+        if (NativeMethods.DwmGetColorizationColor(out var color, out _) == 0)
+        {
+            var red = (byte)((color >> 16) & 0xFF);
+            var green = (byte)((color >> 8) & 0xFF);
+            var blue = (byte)(color & 0xFF);
+            return $"#{red:X2}{green:X2}{blue:X2}";
+        }
+
+        return "#0078D4";
+    }
 }
 
 internal static class AppIconProvider

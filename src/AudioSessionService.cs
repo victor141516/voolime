@@ -27,16 +27,17 @@ internal sealed record VolumeChangeResult(
 
 internal sealed class AudioSessionService
 {
-    private const float VolumeStep = 0.02f;
+    private const float FineVolumeStep = 0.005f;
+    private const float HeldRepeatVolumeStep = 0.02f;
 
-    public VolumeChangeResult Apply(ActiveAppTarget target, VolumeHotkeyKind kind)
+    public VolumeChangeResult Apply(ActiveAppTarget target, VolumeHotkeyKind kind, bool isHeldRepeat)
     {
         var sessions = EnumerateSessions().ToList();
         var matches = MatchSessions(target, sessions).ToList();
 
         if (matches.Count == 0)
         {
-            return new VolumeChangeResult(target.DisplayName, "La app activa no tiene audio abierto", 0, Muted: false, Success: false);
+            return new VolumeChangeResult(target.DisplayName, "The active app has no audio session", 0, Muted: false, Success: false);
         }
 
         var baseVolume = matches.Max(static s => s.Volume);
@@ -50,12 +51,13 @@ internal sealed class AudioSessionService
                 session.VolumeControl.SetMute(muted, Guid.Empty);
             }
 
-            return new VolumeChangeResult(target.DisplayName, muted ? "Silenciado" : "Sonido activado", baseVolume, muted, Success: true);
+            return new VolumeChangeResult(target.DisplayName, muted ? "Muted" : "Unmuted", baseVolume, muted, Success: true);
         }
 
-        var delta = kind == VolumeHotkeyKind.Up ? VolumeStep : -VolumeStep;
+        var step = isHeldRepeat ? HeldRepeatVolumeStep : FineVolumeStep;
+        var delta = kind == VolumeHotkeyKind.Up ? step : -step;
         var newVolume = Math.Clamp(baseVolume + delta, 0f, 1f);
-        newVolume = MathF.Round(newVolume * 100f) / 100f;
+        newVolume = MathF.Round(newVolume * 200f) / 200f;
 
         foreach (var session in matches)
         {
@@ -68,10 +70,18 @@ internal sealed class AudioSessionService
 
         return new VolumeChangeResult(
             target.DisplayName,
-            $"{Math.Round(newVolume * 100)}%",
+            FormatPercent(newVolume),
             newVolume,
             Muted: newVolume <= 0f,
             Success: true);
+    }
+
+    private static string FormatPercent(float volume)
+    {
+        var percent = volume * 100f;
+        return Math.Abs(percent - MathF.Round(percent)) < 0.01f
+            ? $"{Math.Round(percent)}%"
+            : $"{percent:0.0}%";
     }
 
     private static IEnumerable<AudioSession> MatchSessions(ActiveAppTarget target, IReadOnlyCollection<AudioSession> sessions)

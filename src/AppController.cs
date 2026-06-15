@@ -15,29 +15,72 @@ internal sealed class AppController : IDisposable
     private readonly HotkeyService _hotkeys;
     private readonly Icon _appIcon;
     private readonly Forms.NotifyIcon _trayIcon;
+    private readonly Forms.ToolStripMenuItem _shiftModifierItem;
+    private readonly Forms.ToolStripMenuItem _controlModifierItem;
+    private readonly Forms.ToolStripMenuItem _altModifierItem;
     private bool _disposed;
 
     public AppController(WpfApplication application)
     {
         _application = application;
         _appIcon = LoadAppIcon();
-        _hotkeys = new HotkeyService(HandleHotkey);
-        _trayIcon = CreateTrayIcon();
+        _hotkeys = new HotkeyService(HandleHotkey, AppSettings.LoadActivationModifier());
+        (_trayIcon, _shiftModifierItem, _controlModifierItem, _altModifierItem) = CreateTrayIcon();
+        UpdateModifierChecks();
     }
 
-    private Forms.NotifyIcon CreateTrayIcon()
+    private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem Shift, Forms.ToolStripMenuItem Control, Forms.ToolStripMenuItem Alt) CreateTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Salir", null, (_, _) => _application.Shutdown());
+        var activationKey = new Forms.ToolStripMenuItem("Activation key");
+        var shift = CreateModifierItem("Shift", ActivationModifier.Shift);
+        var control = CreateModifierItem("Control", ActivationModifier.Control);
+        var alt = CreateModifierItem("Alt", ActivationModifier.Alt);
+        activationKey.DropDownItems.AddRange(new Forms.ToolStripItem[] { shift, control, alt });
 
-        return new Forms.NotifyIcon
+        menu.Items.Add(activationKey);
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add("Exit", null, (_, _) => _application.Shutdown());
+
+        var trayIcon = new Forms.NotifyIcon
         {
             Icon = _appIcon,
-            Text = "Voolime - Shift+volumen ajusta la app activa",
+            Text = $"Voolime - {GetModifierLabel(_hotkeys.Modifier)}+volume adjusts the active app",
             ContextMenuStrip = menu,
             Visible = true
         };
+
+        return (trayIcon, shift, control, alt);
     }
+
+    private Forms.ToolStripMenuItem CreateModifierItem(string text, ActivationModifier modifier) =>
+        new(text, null, (_, _) => SetActivationModifier(modifier))
+        {
+            CheckOnClick = false
+        };
+
+    private void SetActivationModifier(ActivationModifier modifier)
+    {
+        _hotkeys.SetModifier(modifier);
+        AppSettings.SaveActivationModifier(modifier);
+        UpdateModifierChecks();
+    }
+
+    private void UpdateModifierChecks()
+    {
+        _shiftModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Shift;
+        _controlModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Control;
+        _altModifierItem.Checked = _hotkeys.Modifier == ActivationModifier.Alt;
+        _trayIcon.Text = $"Voolime - {GetModifierLabel(_hotkeys.Modifier)}+volume adjusts the active app";
+    }
+
+    private static string GetModifierLabel(ActivationModifier modifier) =>
+        modifier switch
+        {
+            ActivationModifier.Control => "Ctrl",
+            ActivationModifier.Alt => "Alt",
+            _ => "Shift"
+        };
 
     private static Icon LoadAppIcon()
     {
@@ -73,21 +116,21 @@ internal sealed class AppController : IDisposable
         return (Icon)SystemIcons.Application.Clone();
     }
 
-    private void HandleHotkey(VolumeHotkeyKind kind)
+    private void HandleHotkey(VolumeHotkeyPress press)
     {
         _application.Dispatcher.Invoke(() =>
         {
             var target = _windowResolver.GetActiveTarget();
             if (target is null)
             {
-                _flyout.ShowStatus("Sin ventana activa", "No se pudo detectar una app", 0, muted: false, null, IntPtr.Zero);
+                _flyout.ShowStatus("No active window", "No app detected", 0, muted: false, null, IntPtr.Zero);
                 return;
             }
 
             VolumeChangeResult result;
             try
             {
-                result = _audio.Apply(target, kind);
+                result = _audio.Apply(target, press.Kind, press.IsHeldRepeat);
             }
             catch (Exception ex)
             {

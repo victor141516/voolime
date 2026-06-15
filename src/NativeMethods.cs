@@ -129,6 +129,9 @@ internal static class NativeMethods
     [DllImport("dwmapi.dll", PreserveSig = true)]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    public static extern int DwmGetColorizationColor(out uint colorizationColor, out bool colorizationOpaqueBlend);
+
     public static string? TryGetProcessImagePath(int processId)
     {
         var handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
