@@ -18,13 +18,14 @@ internal sealed class UpdateService
     private const string SourceArgument = "--source";
     private const string TargetArgument = "--target";
     private const string PreviousPidArgument = "--previous-pid";
+    private static readonly TimeSpan HttpRequestTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan PreviousProcessWaitTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ReplaceRetryTimeout = TimeSpan.FromSeconds(30);
     private readonly HttpClient _httpClient = new();
 
     public UpdateService()
     {
-        _httpClient.Timeout = TimeSpan.FromSeconds(15);
+        _httpClient.Timeout = HttpRequestTimeout;
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Voolime");
     }
 
@@ -127,7 +128,7 @@ internal sealed class UpdateService
         Directory.CreateDirectory(tempDirectory);
         var targetPath = Path.Combine(tempDirectory, $"Voolime-{Guid.NewGuid():N}.exe");
 
-        using var response = await _httpClient.GetAsync(downloadUrl);
+        using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
         await using var source = await response.Content.ReadAsStreamAsync();
         await using var target = File.Create(targetPath);
