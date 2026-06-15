@@ -76,6 +76,34 @@ internal sealed class AudioSessionService
             Success: true);
     }
 
+    public VolumeChangeResult SetVolume(ActiveAppTarget target, double volume)
+    {
+        var sessions = EnumerateSessions().ToList();
+        var matches = MatchSessions(target, sessions).ToList();
+
+        if (matches.Count == 0)
+        {
+            return new VolumeChangeResult(target.DisplayName, "The active app has no audio session", 0, Muted: false, Success: false);
+        }
+
+        var newVolume = Math.Clamp((float)volume, 0f, 1f);
+        foreach (var session in matches)
+        {
+            session.VolumeControl.SetMasterVolume(newVolume, Guid.Empty);
+            if (newVolume > 0f)
+            {
+                session.VolumeControl.SetMute(false, Guid.Empty);
+            }
+        }
+
+        return new VolumeChangeResult(
+            target.DisplayName,
+            FormatPercent(newVolume),
+            newVolume,
+            Muted: newVolume <= 0f,
+            Success: true);
+    }
+
     private static string FormatPercent(float volume)
     {
         var percent = volume * 100f;

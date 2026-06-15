@@ -21,6 +21,7 @@ internal sealed class AppController : IDisposable
     private readonly Forms.ToolStripMenuItem _startWithWindowsItem;
     private readonly ModifierMenuItems _keyboardModifierItems;
     private readonly ModifierMenuItems _mouseModifierItems;
+    private ActiveAppTarget? _flyoutTarget;
     private bool _disposed;
 
     public AppController(WpfApplication application)
@@ -31,6 +32,7 @@ internal sealed class AppController : IDisposable
             HandleHotkey,
             AppSettings.LoadKeyboardActivationModifiers(),
             AppSettings.LoadMouseActivationModifiers());
+        _flyout.VolumeRequested += HandleFlyoutVolumeRequested;
         (_trayIcon, _startWithWindowsItem, _keyboardModifierItems, _mouseModifierItems) = CreateTrayIcon();
         UpdateModifierChecks();
         _updateService.CheckOnStartup(_application);
@@ -269,10 +271,12 @@ internal sealed class AppController : IDisposable
             if (target is null)
             {
                 AppLogger.Warn("No active window was detected for a hotkey press.");
+                _flyoutTarget = null;
                 _flyout.ShowStatus("No active window", "No app detected", 0, muted: false, null, IntPtr.Zero);
                 return;
             }
 
+            _flyoutTarget = target;
             VolumeChangeResult result;
             try
             {
@@ -295,6 +299,35 @@ internal sealed class AppController : IDisposable
                 icon,
                 target.WindowHandle);
         });
+    }
+
+    private void HandleFlyoutVolumeRequested(double volume)
+    {
+        var target = _flyoutTarget;
+        if (target is null)
+        {
+            return;
+        }
+
+        VolumeChangeResult result;
+        try
+        {
+            result = _audio.SetVolume(target, volume);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Flyout volume change failed.", ex);
+            result = VolumeChangeResult.Failed(target.DisplayName, ex.Message);
+        }
+
+        var icon = AppIconProvider.GetIcon(target.ProcessPath);
+        _flyout.ShowStatus(
+            result.DisplayName,
+            result.Message,
+            result.Volume,
+            result.Muted,
+            icon,
+            target.WindowHandle);
     }
 
     public void Dispose()

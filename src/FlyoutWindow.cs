@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -28,6 +29,7 @@ internal sealed class FlyoutWindow : Window
     private readonly WpfImage _appIcon;
     private readonly TextBlock _valueText;
     private readonly Border _root;
+    private readonly FrameworkElement _meter;
     private readonly Border _trackBar;
     private readonly ColumnDefinition _fillColumn;
     private readonly ColumnDefinition _emptyColumn;
@@ -37,6 +39,9 @@ internal sealed class FlyoutWindow : Window
     private double _shownTop;
     private double _hiddenTop;
     private int _animationVersion;
+    private bool _isDraggingVolume;
+
+    public event Action<double>? VolumeRequested;
 
     public FlyoutWindow()
     {
@@ -53,11 +58,12 @@ internal sealed class FlyoutWindow : Window
         SnapsToDevicePixels = true;
         UseLayoutRounding = true;
 
-        var (content, icon, valueText, root, trackBar, fill, empty, fillBar) = BuildContent();
+        var (content, icon, valueText, root, meter, trackBar, fill, empty, fillBar) = BuildContent();
         Content = content;
         _appIcon = icon;
         _valueText = valueText;
         _root = root;
+        _meter = meter;
         _trackBar = trackBar;
         _fillColumn = fill;
         _emptyColumn = empty;
@@ -69,6 +75,24 @@ internal sealed class FlyoutWindow : Window
             _hideTimer.Stop();
             SlideOut(++_animationVersion);
         };
+
+        _meter.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            _isDraggingVolume = true;
+            _meter.CaptureMouse();
+            RequestVolumeFromPointer(e.GetPosition(_meter));
+            e.Handled = true;
+        };
+        _meter.PreviewMouseMove += (_, e) =>
+        {
+            if (_isDraggingVolume && e.LeftButton == MouseButtonState.Pressed)
+            {
+                RequestVolumeFromPointer(e.GetPosition(_meter));
+                e.Handled = true;
+            }
+        };
+        _meter.PreviewMouseLeftButtonUp += (_, e) => StopVolumeDrag(e);
+        _meter.LostMouseCapture += (_, _) => _isDraggingVolume = false;
     }
 
     public void ShowStatus(string appName, string message, double volume, bool muted, ImageSource? icon, IntPtr activeWindow)
@@ -111,7 +135,7 @@ internal sealed class FlyoutWindow : Window
         NativeMethods.SetWindowLong(
             hwnd,
             NativeMethods.GWL_EXSTYLE,
-            exStyle | NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE | NativeMethods.WS_EX_TRANSPARENT);
+            exStyle | NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE);
 
         var trueValue = 1;
         NativeMethods.DwmSetWindowAttribute(hwnd, NativeMethods.DWMWA_USE_IMMERSIVE_DARK_MODE, ref trueValue, sizeof(int));
@@ -214,7 +238,34 @@ internal sealed class FlyoutWindow : Window
         _hideTimer.Start();
     }
 
-    private static (FrameworkElement Content, WpfImage Icon, TextBlock ValueText, Border Root, Border TrackBar, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar) BuildContent()
+    private void StopVolumeDrag(MouseButtonEventArgs e)
+    {
+        if (!_isDraggingVolume)
+        {
+            return;
+        }
+
+        _isDraggingVolume = false;
+        _meter.ReleaseMouseCapture();
+        RequestVolumeFromPointer(e.GetPosition(_meter));
+        e.Handled = true;
+    }
+
+    private void RequestVolumeFromPointer(System.Windows.Point position)
+    {
+        var width = _meter.ActualWidth;
+        if (width <= 0)
+        {
+            return;
+        }
+
+        _hideTimer.Stop();
+        _hideTimer.Interval = IdleVisibleDuration;
+        _hideTimer.Start();
+        VolumeRequested?.Invoke(Math.Clamp(position.X / width, 0, 1));
+    }
+
+    private static (FrameworkElement Content, WpfImage Icon, TextBlock ValueText, Border Root, FrameworkElement Meter, Border TrackBar, ColumnDefinition Fill, ColumnDefinition Empty, Border FillBar) BuildContent()
     {
         var fill = new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) };
         var empty = new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) };
@@ -241,6 +292,14 @@ internal sealed class FlyoutWindow : Window
         meter.Children.Add(trackBar);
         Grid.SetColumnSpan(trackBar, 2);
         meter.Children.Add(fillBar);
+        var meterHitTarget = new Grid
+        {
+            Height = 22,
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = MediaBrushes.Transparent,
+            Cursor = System.Windows.Input.Cursors.Hand
+        };
+        meterHitTarget.Children.Add(meter);
 
         var icon = new WpfImage
         {
@@ -265,9 +324,9 @@ internal sealed class FlyoutWindow : Window
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         body.Children.Add(icon);
-        Grid.SetColumn(meter, 1);
-        meter.Margin = new Thickness(14, 0, 12, 0);
-        body.Children.Add(meter);
+        Grid.SetColumn(meterHitTarget, 1);
+        meterHitTarget.Margin = new Thickness(14, 0, 12, 0);
+        body.Children.Add(meterHitTarget);
         Grid.SetColumn(valueText, 2);
         body.Children.Add(valueText);
 
@@ -285,7 +344,7 @@ internal sealed class FlyoutWindow : Window
             Child = body
         };
 
-        return (root, icon, valueText, root, trackBar, fill, empty, fillBar);
+        return (root, icon, valueText, root, meterHitTarget, trackBar, fill, empty, fillBar);
     }
 
     private void ApplyTheme(bool muted)
