@@ -37,12 +37,9 @@ static Bitmap DrawVoolimeIcon(int size)
     graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
     graphics.ScaleTransform(size / 256f, size / 256f);
 
-    var speakerBounds = Rect(25, 47, 160, 160);
-    var pulpBounds = Rect(45, 67, 120, 120);
-    var center = new PointF(105, 127);
-
-    using var shadow = new SolidBrush(Color.FromArgb(50, 0, 0, 0));
-    graphics.FillEllipse(shadow, 38, 192, 136, 18);
+    var speakerBounds = Rect(14, 14, 228, 228);
+    var pulpBounds = Rect(42, 42, 172, 172);
+    var center = new PointF(128, 128);
 
     using var outerBrush = new LinearGradientBrush(speakerBounds, FromHtml("#58D34A"), FromHtml("#14723B"), 115f);
     using var outerPen = new Pen(FromHtml("#0E5132"), 8f) { LineJoin = LineJoin.Round };
@@ -50,7 +47,7 @@ static Bitmap DrawVoolimeIcon(int size)
     graphics.DrawEllipse(outerPen, speakerBounds);
 
     using var rimPen = new Pen(Color.FromArgb(230, 228, 255, 175), 7f);
-    graphics.DrawEllipse(rimPen, Rect(39, 61, 132, 132));
+    graphics.DrawEllipse(rimPen, Rect(34, 34, 188, 188));
 
     using var pulpClip = new GraphicsPath();
     pulpClip.AddEllipse(pulpBounds);
@@ -85,8 +82,8 @@ static Bitmap DrawVoolimeIcon(int size)
         var angle = -90 + i * 36;
         var radians = Math.PI * angle / 180d;
         var end = new PointF(
-            center.X + (float)Math.Cos(radians) * 59f,
-            center.Y + (float)Math.Sin(radians) * 59f);
+            center.X + (float)Math.Cos(radians) * 84f,
+            center.Y + (float)Math.Sin(radians) * 84f);
         graphics.DrawLine(segmentPen, center, end);
     }
 
@@ -97,13 +94,13 @@ static Bitmap DrawVoolimeIcon(int size)
     };
     graphics.FillEllipse(coneBrush, pulpBounds);
 
-    using var capBrush = new LinearGradientBrush(Rect(83, 105, 44, 44), FromHtml("#1D4836"), FromHtml("#0B2119"), 90f);
+    using var capBrush = new LinearGradientBrush(Rect(100, 100, 56, 56), FromHtml("#1D4836"), FromHtml("#0B2119"), 90f);
     using var capPen = new Pen(Color.FromArgb(225, 229, 255, 188), 4f);
-    graphics.FillEllipse(capBrush, Rect(83, 105, 44, 44));
-    graphics.DrawEllipse(capPen, Rect(83, 105, 44, 44));
+    graphics.FillEllipse(capBrush, Rect(100, 100, 56, 56));
+    graphics.DrawEllipse(capPen, Rect(100, 100, 56, 56));
 
     using var glint = new SolidBrush(Color.FromArgb(145, 255, 255, 255));
-    graphics.FillEllipse(glint, 66, 72, 35, 19);
+    graphics.FillEllipse(glint, 72, 54, 52, 28);
 
     return bitmap;
 }
