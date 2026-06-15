@@ -157,7 +157,7 @@ internal sealed class FlyoutWindow : Window
 
     private void SlideIn()
     {
-        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(170))
+        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(230))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
@@ -169,7 +169,7 @@ internal sealed class FlyoutWindow : Window
         BeginAnimation(OpacityProperty, null);
         Opacity = 1;
 
-        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(110))
+        var animation = new DoubleAnimation(_shownTop, TimeSpan.FromMilliseconds(150))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
@@ -180,7 +180,7 @@ internal sealed class FlyoutWindow : Window
     {
         BeginAnimation(TopProperty, null);
 
-        var animation = new DoubleAnimation(_hiddenTop, TimeSpan.FromMilliseconds(190))
+        var animation = new DoubleAnimation(_hiddenTop, TimeSpan.FromMilliseconds(260))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
         };
