@@ -22,6 +22,9 @@ internal static class NativeMethods
     public const int DWMSBT_TRANSIENTWINDOW = 3;
     public const int WCA_ACCENT_POLICY = 19;
     public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOACTIVATE = 0x0010;
 
     private const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
@@ -148,6 +151,15 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINDOWCOMPOSITIONATTRIBDATA data);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr FindWindow(string lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string? lpszWindow);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
     [DllImport("user32.dll")]
     public static extern IntPtr MonitorFromWindow(IntPtr hwnd, int dwFlags);
 
@@ -206,6 +218,46 @@ internal static class NativeMethods
             Marshal.FreeHGlobal(accentPtr);
         }
     }
+
+    public static bool TryPlaceBehindTaskbar(IntPtr hwnd, IntPtr monitor)
+    {
+        var taskbar = FindTaskbarForMonitor(monitor);
+        return taskbar != IntPtr.Zero &&
+            SetWindowPos(hwnd, taskbar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+
+    private static IntPtr FindTaskbarForMonitor(IntPtr monitor)
+    {
+        var primaryTaskbar = FindWindow("Shell_TrayWnd", null);
+        if (IsWindowOnMonitor(primaryTaskbar, monitor))
+        {
+            return primaryTaskbar;
+        }
+
+        var previous = IntPtr.Zero;
+        while (true)
+        {
+            var taskbar = FindWindowEx(IntPtr.Zero, previous, "Shell_SecondaryTrayWnd", null);
+            if (taskbar == IntPtr.Zero)
+            {
+                break;
+            }
+
+            if (IsWindowOnMonitor(taskbar, monitor))
+            {
+                return taskbar;
+            }
+
+            previous = taskbar;
+        }
+
+        return primaryTaskbar;
+    }
+
+    private static bool IsWindowOnMonitor(IntPtr hwnd, IntPtr monitor) =>
+        hwnd != IntPtr.Zero &&
+        monitor != IntPtr.Zero &&
+        MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) == monitor;
 
     public static string? TryGetProcessImagePath(int processId)
     {

@@ -30,6 +30,7 @@ internal sealed class FlyoutWindow : Window
     private readonly ColumnDefinition _emptyColumn;
     private readonly Border _fillBar;
     private readonly DispatcherTimer _hideTimer;
+    private IntPtr _activeMonitor;
     private double _shownTop;
     private double _hiddenTop;
 
@@ -85,10 +86,12 @@ internal sealed class FlyoutWindow : Window
             Top = _hiddenTop;
             Opacity = 1;
             Show();
+            PlaceBehindTaskbar();
             SlideIn();
         }
         else
         {
+            PlaceBehindTaskbar();
             SlideToShownPosition();
         }
 
@@ -126,6 +129,7 @@ internal sealed class FlyoutWindow : Window
         {
             monitor = NativeMethods.MonitorFromWindow(new WindowInteropHelper(this).Handle, NativeMethods.MONITOR_DEFAULTTOPRIMARY);
         }
+        _activeMonitor = monitor;
 
         var info = NativeMethods.MONITORINFO.Create();
         NativeMethods.GetMonitorInfo(monitor, ref info);
@@ -140,6 +144,15 @@ internal sealed class FlyoutWindow : Window
         Left = (info.rcWork.Left + (info.rcWork.Width - widthPx) / 2) / scale;
         _shownTop = (info.rcWork.Bottom - marginPx - heightPx) / scale;
         _hiddenTop = info.rcMonitor.Bottom / scale;
+    }
+
+    private void PlaceBehindTaskbar()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero && _activeMonitor != IntPtr.Zero)
+        {
+            NativeMethods.TryPlaceBehindTaskbar(hwnd, _activeMonitor);
+        }
     }
 
     private void SlideIn()
