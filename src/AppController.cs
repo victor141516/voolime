@@ -43,7 +43,8 @@ internal sealed class AppController : IDisposable
             CheckOnClick = false
         };
         menu.Items.Add(startWithWindows);
-        menu.Items.Add("Open Windows Volume Mixer", null, (_, _) => OpenWindowsVolumeMixer());
+        menu.Items.Add("Open Legacy Volume Mixer", null, (_, _) => OpenLegacyVolumeMixer());
+        menu.Items.Add("Open Playback and Recording Devices", null, (_, _) => OpenPlaybackAndRecordingDevices());
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         var activationKey = new Forms.ToolStripMenuItem("Activation key");
@@ -110,18 +111,43 @@ internal sealed class AppController : IDisposable
         }
     }
 
-    private static void OpenWindowsVolumeMixer()
+    private static void OpenLegacyVolumeMixer()
     {
         try
         {
-            Process.Start(new ProcessStartInfo("ms-settings:apps-volume") { UseShellExecute = true });
-            AppLogger.Info("Opened Windows Volume Mixer settings.");
+            Process.Start(new ProcessStartInfo("sndvol.exe") { UseShellExecute = true });
+            AppLogger.Info("Opened legacy volume mixer.");
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"Opening ms-settings:apps-volume failed: {ex.Message}");
-            Process.Start(new ProcessStartInfo("sndvol.exe") { UseShellExecute = true });
-            AppLogger.Info("Opened classic volume mixer.");
+            AppLogger.Error("Failed to open legacy volume mixer.", ex);
+            Forms.MessageBox.Show(
+                $"Could not open the legacy volume mixer.\n\n{ex.Message}",
+                "Voolime",
+                Forms.MessageBoxButtons.OK,
+                Forms.MessageBoxIcon.Error);
+        }
+    }
+
+    private static void OpenPlaybackAndRecordingDevices()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("rundll32.exe")
+            {
+                Arguments = "shell32.dll,Control_RunDLL mmsys.cpl,,0",
+                UseShellExecute = true
+            });
+            AppLogger.Info("Opened legacy playback and recording devices.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Failed to open legacy playback and recording devices.", ex);
+            Forms.MessageBox.Show(
+                $"Could not open playback and recording devices.\n\n{ex.Message}",
+                "Voolime",
+                Forms.MessageBoxButtons.OK,
+                Forms.MessageBoxIcon.Error);
         }
     }
 

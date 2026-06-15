@@ -11,7 +11,8 @@ The normal Windows volume keys keep their default behavior. Voolime only handles
 - The app runs in the background and exposes a tray icon.
 - The tray context menu contains an `Activation key` submenu and an `Exit` command.
 - The tray context menu contains `Start with Windows`, which toggles a fixed `Voolime.lnk` shortcut in the current user's Startup folder.
-- The tray context menu contains `Open Windows Volume Mixer`, which opens the native Windows volume mixer settings.
+- The tray context menu contains `Open Legacy Volume Mixer`, which opens the Win32 `sndvol.exe` mixer.
+- The tray context menu contains `Open Playback and Recording Devices`, which opens the legacy Control Panel Sound dialog through `mmsys.cpl`.
 - The active app volume changes when the configured activation key is held while pressing Volume Up, Volume Down, or Mute.
 - Single key presses adjust app volume by 0.5%. Held key repeat events adjust volume by 2% after the first press.
 - A compact Windows 11-style flyout appears near the bottom center of the active monitor.
