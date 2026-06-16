@@ -51,6 +51,22 @@ internal static class AppSettings
         }
     }
 
+    public static string? LoadIndicatorMonitorDeviceName()
+    {
+        var value = LoadSettings().IndicatorMonitorDeviceName;
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    public static void SaveIndicatorMonitorDeviceName(string? deviceName)
+    {
+        lock (Sync)
+        {
+            var settings = LoadSettings();
+            settings.IndicatorMonitorDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
+            SaveSettings(settings);
+        }
+    }
+
     private static SettingsFile LoadSettings()
     {
         lock (Sync)
@@ -139,5 +155,7 @@ internal static class AppSettings
             nameof(ActivationModifiers.Control),
             nameof(ActivationModifiers.Shift)
         ];
+
+        public string? IndicatorMonitorDeviceName { get; set; }
     }
 }

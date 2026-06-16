@@ -22,6 +22,7 @@ internal static class NativeMethods
     public const int DWMSBT_TRANSIENTWINDOW = 3;
     public const int WCA_ACCENT_POLICY = 19;
     public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+    public const int MDT_EFFECTIVE_DPI = 0;
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOACTIVATE = 0x0010;
@@ -163,11 +164,17 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr MonitorFromWindow(IntPtr hwnd, int dwFlags);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, int dwFlags);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    [DllImport("shcore.dll", PreserveSig = true)]
+    private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern IntPtr GetModuleHandle(string? lpModuleName);
@@ -217,6 +224,28 @@ internal static class NativeMethods
         {
             Marshal.FreeHGlobal(accentPtr);
         }
+    }
+
+    public static uint GetEffectiveDpi(IntPtr monitor, IntPtr hwnd)
+    {
+        if (monitor != IntPtr.Zero)
+        {
+            try
+            {
+                if (GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, out var dpiX, out _) == 0 && dpiX > 0)
+                {
+                    return dpiX;
+                }
+            }
+            catch (DllNotFoundException)
+            {
+            }
+            catch (EntryPointNotFoundException)
+            {
+            }
+        }
+
+        return hwnd == IntPtr.Zero ? 96u : GetDpiForWindow(hwnd);
     }
 
     public static bool TryPlaceBehindTaskbar(IntPtr hwnd, IntPtr monitor)

@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using Drawing = System.Drawing;
+using Forms = System.Windows.Forms;
 using Microsoft.Win32;
 using MediaBrushes = System.Windows.Media.Brushes;
 using MediaColor = System.Windows.Media.Color;
@@ -36,9 +37,18 @@ internal sealed class FlyoutWindow : Window
     private readonly Border _fillBar;
     private readonly DispatcherTimer _hideTimer;
     private IntPtr _activeMonitor;
+    private string? _indicatorMonitorDeviceName;
+    private double _shownLeft;
     private double _shownTop;
     private double _hiddenTop;
+    private int _shownLeftPx;
+    private int _shownTopPx;
+    private int _hiddenTopPx;
+    private int _windowWidthPx;
+    private int _windowHeightPx;
     private int _animationVersion;
+    private FlyoutAnimationState _animationState = FlyoutAnimationState.Hidden;
+    private bool _monitorPositionDirty = true;
     private bool _isDraggingVolume;
 
     public event Action<double>? VolumeRequested;
@@ -95,7 +105,15 @@ internal sealed class FlyoutWindow : Window
         _meter.LostMouseCapture += (_, _) => _isDraggingVolume = false;
     }
 
-    public void ShowStatus(string appName, string message, double volume, bool muted, ImageSource? icon, IntPtr activeWindow)
+    public void SetIndicatorMonitorDeviceName(string? deviceName)
+    {
+        _indicatorMonitorDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
+        _monitorPositionDirty = true;
+        AppLogger.Info($"Indicator monitor selection changed: {FormatSelection(_indicatorMonitorDeviceName)}.");
+        RefreshMonitorPosition();
+    }
+
+    public void ShowStatus(string appName, string message, double volume, bool muted, ImageSource? icon)
     {
         _appIcon.Source = icon ?? AppIconProvider.GetFallbackIcon();
         _valueText.Text = FormatValue(message, volume, muted);
@@ -105,16 +123,20 @@ internal sealed class FlyoutWindow : Window
         _fillColumn.Width = new GridLength(Math.Max(clamped, 0.001), GridUnitType.Star);
         _emptyColumn.Width = new GridLength(Math.Max(1 - clamped, 0.001), GridUnitType.Star);
 
-        PositionOnActiveMonitor(activeWindow);
+        if (!IsVisible || _monitorPositionDirty)
+        {
+            PositionOnSelectedMonitor();
+        }
+
         _hideTimer.Stop();
-        var animationVersion = ++_animationVersion;
 
         if (!IsVisible)
         {
-            BeginAnimation(TopProperty, null);
-            BeginAnimation(OpacityProperty, null);
+            var animationVersion = ++_animationVersion;
+            StopAnimations();
+            Left = _shownLeft;
             Top = _hiddenTop;
-            Opacity = 1;
+            Opacity = 0;
             Show();
             PlaceBehindTaskbar();
             SlideIn(animationVersion);
@@ -122,8 +144,37 @@ internal sealed class FlyoutWindow : Window
         else
         {
             PlaceBehindTaskbar();
-            SlideToShownPosition(animationVersion);
+            if (_animationState == FlyoutAnimationState.Entering)
+            {
+                AppLogger.Info("Flyout updated during entry animation; keeping current animation.");
+                return;
+            }
+
+            if (_animationState == FlyoutAnimationState.Shown)
+            {
+                StartIdleTimer(++_animationVersion);
+                return;
+            }
+
+            SlideToShownPosition(++_animationVersion);
         }
+    }
+
+    public void RefreshMonitorPosition()
+    {
+        _monitorPositionDirty = true;
+        if (!IsVisible)
+        {
+            AppLogger.Info($"Indicator monitor refresh deferred because flyout is hidden. Selection: {FormatSelection(_indicatorMonitorDeviceName)}.");
+            return;
+        }
+
+        StopAnimations();
+        PositionOnSelectedMonitor();
+        Left = _shownLeft;
+        Top = _shownTop;
+        Opacity = 1;
+        PlaceBehindTaskbar();
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -149,9 +200,10 @@ internal sealed class FlyoutWindow : Window
         ApplyTheme(muted: false);
     }
 
-    private void PositionOnActiveMonitor(IntPtr activeWindow)
+    private void PositionOnSelectedMonitor()
     {
-        var monitor = NativeMethods.MonitorFromWindow(activeWindow, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        var (screen, reason) = ResolveIndicatorScreen();
+        var monitor = GetMonitorForScreen(screen);
         if (monitor == IntPtr.Zero)
         {
             monitor = NativeMethods.MonitorFromWindow(new WindowInteropHelper(this).Handle, NativeMethods.MONITOR_DEFAULTTOPRIMARY);
@@ -159,18 +211,102 @@ internal sealed class FlyoutWindow : Window
         _activeMonitor = monitor;
 
         var info = NativeMethods.MONITORINFO.Create();
-        NativeMethods.GetMonitorInfo(monitor, ref info);
+        if (!NativeMethods.GetMonitorInfo(monitor, ref info))
+        {
+            AppLogger.Warn($"Could not read monitor info for {screen.DeviceName}; falling back to primary monitor.");
+            monitor = GetPrimaryMonitor();
+            _activeMonitor = monitor;
+            info = NativeMethods.MONITORINFO.Create();
+            NativeMethods.GetMonitorInfo(monitor, ref info);
+        }
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        var dpi = hwnd == IntPtr.Zero ? 96u : NativeMethods.GetDpiForWindow(hwnd);
+        var dpi = NativeMethods.GetEffectiveDpi(monitor, hwnd);
         var scale = dpi / 96.0;
-        var widthPx = Width * scale;
-        var heightPx = Height * scale;
-        var marginPx = BottomMargin * scale;
+        _windowWidthPx = (int)Math.Round(FlyoutWidth * scale);
+        _windowHeightPx = (int)Math.Round(FlyoutHeight * scale);
+        var marginPx = (int)Math.Round(BottomMargin * scale);
 
-        Left = (info.rcWork.Left + (info.rcWork.Width - widthPx) / 2) / scale;
-        _shownTop = (info.rcWork.Bottom - marginPx - heightPx) / scale;
-        _hiddenTop = info.rcMonitor.Bottom / scale;
+        _shownLeftPx = info.rcWork.Left + (info.rcWork.Width - _windowWidthPx) / 2;
+        _shownTopPx = info.rcWork.Bottom - marginPx - _windowHeightPx;
+        _hiddenTopPx = Math.Max(_shownTopPx, info.rcMonitor.Bottom - _windowHeightPx);
+        _shownLeft = _shownLeftPx / scale;
+        _shownTop = _shownTopPx / scale;
+        _hiddenTop = _hiddenTopPx / scale;
+
+        Width = FlyoutWidth;
+        Height = FlyoutHeight;
+        _monitorPositionDirty = false;
+
+        AppLogger.Info(
+            "Flyout monitor resolved: " +
+            $"selection={FormatSelection(_indicatorMonitorDeviceName)}, reason={reason}, " +
+            $"screen={screen.DeviceName}, primary={screen.Primary}, " +
+            $"screenBounds={FormatRectangle(screen.Bounds)}, screenWorkingArea={FormatRectangle(screen.WorkingArea)}, " +
+            $"monitor=0x{monitor.ToInt64():X}, rcMonitor={FormatRect(info.rcMonitor)}, rcWork={FormatRect(info.rcWork)}, " +
+            $"dpi={dpi}, scale={scale:0.###}, " +
+            $"windowPx={_windowWidthPx}x{_windowHeightPx}, shownPx=({_shownLeftPx},{_shownTopPx}), hiddenTopPx={_hiddenTopPx}.");
+    }
+
+    private static IntPtr GetPrimaryMonitor()
+    {
+        var screen = Forms.Screen.PrimaryScreen;
+        if (screen is null)
+        {
+            return IntPtr.Zero;
+        }
+
+        var bounds = screen.Bounds;
+        var point = new NativeMethods.POINT
+        {
+            X = bounds.Left + Math.Max(bounds.Width / 2, 0),
+            Y = bounds.Top + Math.Max(bounds.Height / 2, 0)
+        };
+
+        return NativeMethods.MonitorFromPoint(point, NativeMethods.MONITOR_DEFAULTTOPRIMARY);
+    }
+
+    private (Forms.Screen Screen, string Reason) ResolveIndicatorScreen()
+    {
+        var screens = Forms.Screen.AllScreens
+            .OrderBy(screen => GetMonitorSortKey(screen.DeviceName))
+            .ThenBy(screen => screen.DeviceName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        AppLogger.Info($"Detected monitors: {string.Join("; ", screens.Select(DescribeScreen))}.");
+
+        if (!string.IsNullOrWhiteSpace(_indicatorMonitorDeviceName))
+        {
+            var selected = screens.FirstOrDefault(screen =>
+                string.Equals(screen.DeviceName, _indicatorMonitorDeviceName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(GetDisplayName(screen.DeviceName), _indicatorMonitorDeviceName, StringComparison.OrdinalIgnoreCase));
+            if (selected is not null)
+            {
+                return (selected, "configured monitor");
+            }
+
+            AppLogger.Warn($"Configured indicator monitor was not found: {_indicatorMonitorDeviceName}. Falling back to primary monitor.");
+        }
+
+        var primary = screens.FirstOrDefault(screen => screen.Primary) ?? Forms.Screen.PrimaryScreen;
+        if (primary is not null)
+        {
+            return (primary, "primary monitor");
+        }
+
+        return (Forms.Screen.FromPoint(new Drawing.Point(0, 0)), "fallback monitor");
+    }
+
+    private static IntPtr GetMonitorForScreen(Forms.Screen screen)
+    {
+        var bounds = screen.Bounds;
+        var point = new NativeMethods.POINT
+        {
+            X = bounds.Left + Math.Max(bounds.Width / 2, 0),
+            Y = bounds.Top + Math.Max(bounds.Height / 2, 0)
+        };
+
+        return NativeMethods.MonitorFromPoint(point, NativeMethods.MONITOR_DEFAULTTOPRIMARY);
     }
 
     private void PlaceBehindTaskbar()
@@ -184,47 +320,103 @@ internal sealed class FlyoutWindow : Window
 
     private void SlideIn(int animationVersion)
     {
-        var animation = new DoubleAnimation(_shownTop, EntryAnimationDuration)
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        };
-        animation.Completed += (_, _) => StartIdleTimer(animationVersion);
-        BeginAnimation(TopProperty, animation);
+        _animationState = FlyoutAnimationState.Entering;
+        AnimateTo(_shownTop, 1, EntryAnimationDuration, EaseOutCubic(), animationVersion, "slide in", () => StartIdleTimer(animationVersion));
     }
 
     private void SlideToShownPosition(int animationVersion)
     {
-        BeginAnimation(OpacityProperty, null);
-        Opacity = 1;
-
-        var duration = Math.Abs(Top - _shownTop) < 1
+        var duration = Math.Abs(Top - _shownTop) < 1 && Opacity >= 0.99
             ? TimeSpan.Zero
             : EntryAnimationDuration;
-        var animation = new DoubleAnimation(_shownTop, duration)
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        };
-        animation.Completed += (_, _) => StartIdleTimer(animationVersion);
-        BeginAnimation(TopProperty, animation);
+        _animationState = FlyoutAnimationState.Entering;
+        AnimateTo(_shownTop, 1, duration, EaseOutCubic(), animationVersion, "slide to shown position", () => StartIdleTimer(animationVersion));
     }
 
     private void SlideOut(int animationVersion)
     {
-        BeginAnimation(TopProperty, null);
-
-        var animation = new DoubleAnimation(_hiddenTop, ExitAnimationDuration)
+        _animationState = FlyoutAnimationState.Exiting;
+        AnimateTo(_hiddenTop, 0, ExitAnimationDuration, EaseInCubic(), animationVersion, "slide out", () =>
         {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
-        };
-        animation.Completed += (_, _) =>
-        {
-            if (animationVersion == _animationVersion && Top >= _hiddenTop - 1)
+            if (animationVersion == _animationVersion)
             {
+                _animationState = FlyoutAnimationState.Hidden;
                 Hide();
             }
-        };
-        BeginAnimation(TopProperty, animation);
+        });
     }
+
+    private void AnimateTo(
+        double top,
+        double opacity,
+        TimeSpan duration,
+        IEasingFunction easing,
+        int animationVersion,
+        string reason,
+        Action completed)
+    {
+        StopAnimations();
+        AppLogger.Info($"Flyout animation started: {reason}, fromTop={Top:0.###}, toTop={top:0.###}, fromOpacity={Opacity:0.###}, toOpacity={opacity:0.###}, durationMs={duration.TotalMilliseconds:0}.");
+
+        if (duration <= TimeSpan.Zero)
+        {
+            Top = top;
+            Opacity = opacity;
+            if (opacity >= 0.99)
+            {
+                _animationState = FlyoutAnimationState.Shown;
+            }
+
+            completed();
+            return;
+        }
+
+        var topAnimation = new DoubleAnimation(top, duration)
+        {
+            EasingFunction = easing
+        };
+        topAnimation.Completed += (_, _) =>
+        {
+            if (animationVersion != _animationVersion)
+            {
+                return;
+            }
+
+            Top = top;
+            Opacity = opacity;
+            AppLogger.Info($"Flyout animation completed: {reason}, top={Top:0.###}, opacity={Opacity:0.###}.");
+            if (opacity >= 0.99)
+            {
+                _animationState = FlyoutAnimationState.Shown;
+            }
+
+            completed();
+        };
+
+        var opacityAnimation = new DoubleAnimation(opacity, duration)
+        {
+            EasingFunction = easing
+        };
+
+        BeginAnimation(TopProperty, topAnimation, HandoffBehavior.SnapshotAndReplace);
+        BeginAnimation(OpacityProperty, opacityAnimation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    private void StopAnimations()
+    {
+        var currentTop = Top;
+        var currentOpacity = Opacity;
+        BeginAnimation(TopProperty, null);
+        BeginAnimation(OpacityProperty, null);
+        Top = currentTop;
+        Opacity = currentOpacity;
+    }
+
+    private static IEasingFunction EaseOutCubic() =>
+        new CubicEase { EasingMode = EasingMode.EaseOut };
+
+    private static IEasingFunction EaseInCubic() =>
+        new CubicEase { EasingMode = EasingMode.EaseIn };
 
     private void StartIdleTimer(int animationVersion)
     {
@@ -408,6 +600,43 @@ internal sealed class FlyoutWindow : Window
         return brush;
     }
 
+    private static string DescribeScreen(Forms.Screen screen) =>
+        $"{screen.DeviceName} primary={screen.Primary} bounds={FormatRectangle(screen.Bounds)} work={FormatRectangle(screen.WorkingArea)}";
+
+    private static string FormatSelection(string? deviceName) =>
+        string.IsNullOrWhiteSpace(deviceName) ? "primary" : deviceName;
+
+    private static string FormatRect(NativeMethods.RECT rect) =>
+        $"({rect.Left},{rect.Top},{rect.Width},{rect.Height})";
+
+    private static string FormatRectangle(Drawing.Rectangle rectangle) =>
+        $"({rectangle.Left},{rectangle.Top},{rectangle.Width},{rectangle.Height})";
+
+    private static int GetMonitorSortKey(string deviceName)
+    {
+        for (var index = deviceName.Length - 1; index >= 0; index--)
+        {
+            if (!char.IsDigit(deviceName[index]))
+            {
+                return int.TryParse(deviceName[(index + 1)..], out var value)
+                    ? value
+                    : int.MaxValue;
+            }
+        }
+
+        return int.TryParse(deviceName, out var fallbackValue)
+            ? fallbackValue
+            : int.MaxValue;
+    }
+
+    private static string GetDisplayName(string deviceName)
+    {
+        const string displayPrefix = "\\\\.\\";
+        return deviceName.StartsWith(displayPrefix, StringComparison.Ordinal)
+            ? deviceName[displayPrefix.Length..]
+            : deviceName;
+    }
+
 }
 
 internal sealed record FlyoutTheme(
@@ -450,6 +679,14 @@ internal sealed record FlyoutTheme(
 
         return "#0078D4";
     }
+}
+
+internal enum FlyoutAnimationState
+{
+    Hidden,
+    Entering,
+    Shown,
+    Exiting
 }
 
 internal static class AppIconProvider

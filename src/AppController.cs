@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Diagnostics;
 using System.Reflection;
+using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 using WpfApplication = System.Windows.Application;
 
@@ -19,9 +20,11 @@ internal sealed class AppController : IDisposable
     private readonly Icon _appIcon;
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly Forms.ToolStripMenuItem _startWithWindowsItem;
+    private readonly Forms.ToolStripMenuItem _showIndicatorOnItem;
     private readonly ModifierMenuItems _keyboardModifierItems;
     private readonly ModifierMenuItems _mouseModifierItems;
     private ActiveAppTarget? _flyoutTarget;
+    private string? _indicatorMonitorDeviceName;
     private bool _disposed;
 
     public AppController(WpfApplication application)
@@ -32,25 +35,34 @@ internal sealed class AppController : IDisposable
             HandleHotkey,
             AppSettings.LoadKeyboardActivationModifiers(),
             AppSettings.LoadMouseActivationModifiers());
+        _indicatorMonitorDeviceName = AppSettings.LoadIndicatorMonitorDeviceName();
+        _flyout.SetIndicatorMonitorDeviceName(_indicatorMonitorDeviceName);
         _flyout.VolumeRequested += HandleFlyoutVolumeRequested;
-        (_trayIcon, _startWithWindowsItem, _keyboardModifierItems, _mouseModifierItems) = CreateTrayIcon();
+        (_trayIcon, _startWithWindowsItem, _showIndicatorOnItem, _keyboardModifierItems, _mouseModifierItems) = CreateTrayIcon();
+        SystemEvents.DisplaySettingsChanged += HandleDisplaySettingsChanged;
         UpdateModifierChecks();
         _updateService.CheckOnStartup(_application);
     }
 
-    private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem StartWithWindows, ModifierMenuItems Keyboard, ModifierMenuItems Mouse) CreateTrayIcon()
+    private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem StartWithWindows, Forms.ToolStripMenuItem ShowIndicatorOn, ModifierMenuItems Keyboard, ModifierMenuItems Mouse) CreateTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
-        menu.Opening += (_, _) => UpdateStartupShortcutCheck();
+        menu.Opening += (_, _) =>
+        {
+            UpdateStartupShortcutCheck();
+            UpdateMonitorMenu();
+        };
 
         var startWithWindows = new Forms.ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleStartWithWindows())
         {
             CheckOnClick = false
         };
+        var showIndicatorOn = new Forms.ToolStripMenuItem("Show Indicator On");
 
         menu.Items.Add("Open Volume Mixer", null, (_, _) => OpenLegacyVolumeMixer());
         menu.Items.Add("Open Playback and Recording Devices", null, (_, _) => OpenPlaybackAndRecordingDevices());
         menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add(showIndicatorOn);
 
         var keyboardModifiers = CreateModifierMenu("Keyboard Activation Key", ToggleKeyboardModifier);
         var mouseModifiers = CreateModifierMenu("Mouse Activation Key", ToggleMouseModifier);
@@ -69,7 +81,76 @@ internal sealed class AppController : IDisposable
             Visible = true
         };
 
-        return (trayIcon, startWithWindows, keyboardModifiers, mouseModifiers);
+        UpdateMonitorMenu(showIndicatorOn);
+        return (trayIcon, startWithWindows, showIndicatorOn, keyboardModifiers, mouseModifiers);
+    }
+
+    private void UpdateMonitorMenu() =>
+        UpdateMonitorMenu(_showIndicatorOnItem);
+
+    private void UpdateMonitorMenu(Forms.ToolStripMenuItem root)
+    {
+        root.DropDownItems.Clear();
+
+        root.DropDownItems.Add(new Forms.ToolStripMenuItem("Primary Monitor", null, (_, _) => SetIndicatorMonitorDeviceName(null))
+        {
+            Checked = IsPrimaryIndicatorMonitorSelected(),
+            CheckOnClick = false
+        });
+
+        var screens = Forms.Screen.AllScreens
+            .OrderBy(screen => GetMonitorSortKey(screen.DeviceName))
+            .ThenBy(screen => screen.DeviceName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (screens.Length == 0)
+        {
+            return;
+        }
+
+        root.DropDownItems.Add(new Forms.ToolStripSeparator());
+        for (var index = 0; index < screens.Length; index++)
+        {
+            var screen = screens[index];
+            var label = $"Monitor {index + 1}";
+            var displayName = GetDisplayName(screen.DeviceName);
+            if (!string.IsNullOrWhiteSpace(displayName))
+            {
+                label += $" - {displayName}";
+            }
+
+            if (screen.Primary)
+            {
+                label += " (primary)";
+            }
+
+            var deviceName = screen.DeviceName;
+            root.DropDownItems.Add(new Forms.ToolStripMenuItem(label, null, (_, _) => SetIndicatorMonitorDeviceName(deviceName))
+            {
+                Checked = string.Equals(_indicatorMonitorDeviceName, deviceName, StringComparison.OrdinalIgnoreCase),
+                CheckOnClick = false
+            });
+        }
+    }
+
+    private bool IsPrimaryIndicatorMonitorSelected()
+    {
+        if (string.IsNullOrWhiteSpace(_indicatorMonitorDeviceName))
+        {
+            return true;
+        }
+
+        return !Forms.Screen.AllScreens.Any(screen =>
+            string.Equals(screen.DeviceName, _indicatorMonitorDeviceName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void SetIndicatorMonitorDeviceName(string? deviceName)
+    {
+        _indicatorMonitorDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
+        AppLogger.Info($"Tray monitor selection clicked: {FormatIndicatorMonitorSelection(_indicatorMonitorDeviceName)}.");
+        AppSettings.SaveIndicatorMonitorDeviceName(_indicatorMonitorDeviceName);
+        _flyout.SetIndicatorMonitorDeviceName(_indicatorMonitorDeviceName);
+        UpdateMonitorMenu();
     }
 
     private static ModifierMenuItems CreateModifierMenu(string text, Action<ActivationModifiers> toggle)
@@ -162,6 +243,26 @@ internal sealed class AppController : IDisposable
         }
     }
 
+    private void HandleDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        AppLogger.Info("Display settings changed; refreshing indicator monitor.");
+        _application.Dispatcher.BeginInvoke(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _flyout.RefreshMonitorPosition();
+            UpdateMonitorMenu();
+        });
+    }
+
     private static void OpenLegacyVolumeMixer()
     {
         try
@@ -228,6 +329,34 @@ internal sealed class AppController : IDisposable
         return string.Join("+", parts);
     }
 
+    private static int GetMonitorSortKey(string deviceName)
+    {
+        for (var index = deviceName.Length - 1; index >= 0; index--)
+        {
+            if (!char.IsDigit(deviceName[index]))
+            {
+                return int.TryParse(deviceName[(index + 1)..], out var value)
+                    ? value
+                    : int.MaxValue;
+            }
+        }
+
+        return int.TryParse(deviceName, out var fallbackValue)
+            ? fallbackValue
+            : int.MaxValue;
+    }
+
+    private static string GetDisplayName(string deviceName)
+    {
+        const string displayPrefix = "\\\\.\\";
+        return deviceName.StartsWith(displayPrefix, StringComparison.Ordinal)
+            ? deviceName[displayPrefix.Length..]
+            : deviceName;
+    }
+
+    private static string FormatIndicatorMonitorSelection(string? deviceName) =>
+        string.IsNullOrWhiteSpace(deviceName) ? "Primary Monitor" : deviceName;
+
     private static Icon LoadAppIcon()
     {
         var processPath = Environment.ProcessPath;
@@ -272,7 +401,7 @@ internal sealed class AppController : IDisposable
             {
                 AppLogger.Warn("No active window was detected for a hotkey press.");
                 _flyoutTarget = null;
-                _flyout.ShowStatus("No active window", "No app detected", 0, muted: false, null, IntPtr.Zero);
+                _flyout.ShowStatus("No active window", "No app detected", 0, muted: false, null);
                 return;
             }
 
@@ -296,8 +425,7 @@ internal sealed class AppController : IDisposable
                 result.Message,
                 result.Volume,
                 result.Muted,
-                icon,
-                target.WindowHandle);
+                icon);
         });
     }
 
@@ -326,8 +454,7 @@ internal sealed class AppController : IDisposable
             result.Message,
             result.Volume,
             result.Muted,
-            icon,
-            target.WindowHandle);
+            icon);
     }
 
     public void Dispose()
@@ -338,6 +465,7 @@ internal sealed class AppController : IDisposable
         }
 
         _disposed = true;
+        SystemEvents.DisplaySettingsChanged -= HandleDisplaySettingsChanged;
         _hotkeys.Dispose();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
