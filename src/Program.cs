@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Security.Principal;
 using WpfApplication = System.Windows.Application;
 using WpfShutdownMode = System.Windows.ShutdownMode;
 
@@ -16,6 +17,7 @@ internal static class Program
 
         AppLogger.Initialize();
         AppLogger.Info("Voolime starting.");
+        AppLogger.Info($"Process elevated: {IsProcessElevated()}.");
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             AppLogger.Error("Unhandled exception.", e.ExceptionObject as Exception);
 
@@ -143,4 +145,11 @@ internal static class Program
 
     private static string FormatMonitorSelection(string? deviceName) =>
         string.IsNullOrWhiteSpace(deviceName) ? "Primary Monitor" : deviceName;
+
+    private static bool IsProcessElevated()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var principal = new WindowsPrincipal(identity);
+        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
 }

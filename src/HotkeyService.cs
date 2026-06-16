@@ -30,6 +30,7 @@ internal sealed class HotkeyService : IDisposable
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
     private const int WM_MOUSEWHEEL = 0x020A;
+    private const int WM_MOUSEHWHEEL = 0x020E;
     private const int WH_KEYBOARD_LL = 13;
     private const int WH_MOUSE_LL = 14;
     private const int VK_CONTROL = 0x11;
@@ -72,7 +73,11 @@ internal sealed class HotkeyService : IDisposable
         _keyboardProc = KeyboardHookCallback;
         _mouseProc = MouseHookCallback;
         _keyboardHook = NativeMethods.SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, NativeMethods.GetModuleHandle(null), 0);
+        var keyboardHookError = _keyboardHook == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
         _mouseHook = NativeMethods.SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, NativeMethods.GetModuleHandle(null), 0);
+        var mouseHookError = _mouseHook == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+        AppLogger.Info($"Keyboard hook installed: {_keyboardHook != IntPtr.Zero}, error={keyboardHookError}.");
+        AppLogger.Info($"Mouse hook installed: {_mouseHook != IntPtr.Zero}, error={mouseHookError}.");
     }
 
     public ActivationModifiers KeyboardModifiers => _keyboardModifiers;
@@ -146,13 +151,16 @@ internal sealed class HotkeyService : IDisposable
 
     private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        if (nCode >= 0 && wParam.ToInt32() == WM_MOUSEWHEEL && AreModifiersDown(_mouseModifiers))
+        var message = wParam.ToInt32();
+        if (nCode >= 0 && IsWheelMessage(message) && AreModifiersDown(_mouseModifiers))
         {
             var info = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
             var wheelDelta = unchecked((short)((info.mouseData >> 16) & 0xFFFF));
             if (wheelDelta != 0)
             {
-                Dispatch(wheelDelta > 0 ? VolumeHotkeyKind.Up : VolumeHotkeyKind.Down, isHeldRepeat: false);
+                var kind = GetWheelKind(message, wheelDelta);
+                AppLogger.Info($"Mouse wheel volume action consumed: message=0x{message:X}, delta={wheelDelta}, kind={kind}, modifiers={_mouseModifiers}.");
+                Dispatch(kind, isHeldRepeat: false);
                 return new IntPtr(1);
             }
         }
@@ -168,6 +176,19 @@ internal sealed class HotkeyService : IDisposable
 
     private static bool IsKeyUp(int message) =>
         message is WM_KEYUP or WM_SYSKEYUP;
+
+    private static bool IsWheelMessage(int message) =>
+        message is WM_MOUSEWHEEL or WM_MOUSEHWHEEL;
+
+    private static VolumeHotkeyKind GetWheelKind(int message, short wheelDelta)
+    {
+        if (message == WM_MOUSEHWHEEL)
+        {
+            return wheelDelta > 0 ? VolumeHotkeyKind.Down : VolumeHotkeyKind.Up;
+        }
+
+        return wheelDelta > 0 ? VolumeHotkeyKind.Up : VolumeHotkeyKind.Down;
+    }
 
     private static bool AreModifiersDown(ActivationModifiers modifiers)
     {

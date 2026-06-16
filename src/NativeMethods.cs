@@ -7,12 +7,12 @@ namespace Voolime;
 internal static class NativeMethods
 {
     public static readonly IntPtr HWND_MESSAGE = new(-3);
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
     public const int GWL_EXSTYLE = -20;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_NOACTIVATE = 0x08000000;
     public const int WS_EX_TRANSPARENT = 0x00000020;
     public const int GA_ROOT = 2;
-    public const int MONITOR_DEFAULTTONULL = 0x00000000;
     public const int MONITOR_DEFAULTTOPRIMARY = 0x00000001;
     public const int MONITOR_DEFAULTTONEAREST = 0x00000002;
     public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
@@ -152,12 +152,6 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINDOWCOMPOSITIONATTRIBDATA data);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr FindWindow(string lpClassName, string? lpWindowName);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string? lpszWindow);
-
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
@@ -248,45 +242,22 @@ internal static class NativeMethods
         return hwnd == IntPtr.Zero ? 96u : GetDpiForWindow(hwnd);
     }
 
-    public static bool TryPlaceBehindTaskbar(IntPtr hwnd, IntPtr monitor)
+    public static bool TryMakeTopmostNoActivate(IntPtr hwnd, out int error)
     {
-        var taskbar = FindTaskbarForMonitor(monitor);
-        return taskbar != IntPtr.Zero &&
-            SetWindowPos(hwnd, taskbar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    }
-
-    private static IntPtr FindTaskbarForMonitor(IntPtr monitor)
-    {
-        var primaryTaskbar = FindWindow("Shell_TrayWnd", null);
-        if (IsWindowOnMonitor(primaryTaskbar, monitor))
+        error = 0;
+        if (hwnd == IntPtr.Zero)
         {
-            return primaryTaskbar;
+            return false;
         }
 
-        var previous = IntPtr.Zero;
-        while (true)
+        var success = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        if (!success)
         {
-            var taskbar = FindWindowEx(IntPtr.Zero, previous, "Shell_SecondaryTrayWnd", null);
-            if (taskbar == IntPtr.Zero)
-            {
-                break;
-            }
-
-            if (IsWindowOnMonitor(taskbar, monitor))
-            {
-                return taskbar;
-            }
-
-            previous = taskbar;
+            error = Marshal.GetLastWin32Error();
         }
 
-        return primaryTaskbar;
+        return success;
     }
-
-    private static bool IsWindowOnMonitor(IntPtr hwnd, IntPtr monitor) =>
-        hwnd != IntPtr.Zero &&
-        monitor != IntPtr.Zero &&
-        MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) == monitor;
 
     public static string? TryGetProcessImagePath(int processId)
     {

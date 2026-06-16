@@ -138,12 +138,12 @@ internal sealed class FlyoutWindow : Window
             Top = _hiddenTop;
             Opacity = 0;
             Show();
-            PlaceBehindTaskbar();
+            EnsureOverlayZOrder("initial show");
             SlideIn(animationVersion);
         }
         else
         {
-            PlaceBehindTaskbar();
+            EnsureOverlayZOrder("status update");
             if (_animationState == FlyoutAnimationState.Entering)
             {
                 AppLogger.Info("Flyout updated during entry animation; keeping current animation.");
@@ -174,7 +174,7 @@ internal sealed class FlyoutWindow : Window
         Left = _shownLeft;
         Top = _shownTop;
         Opacity = 1;
-        PlaceBehindTaskbar();
+        EnsureOverlayZOrder("monitor refresh");
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -309,13 +309,27 @@ internal sealed class FlyoutWindow : Window
         return NativeMethods.MonitorFromPoint(point, NativeMethods.MONITOR_DEFAULTTOPRIMARY);
     }
 
-    private void PlaceBehindTaskbar()
+    private void EnsureOverlayZOrder(string reason)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd != IntPtr.Zero && _activeMonitor != IntPtr.Zero)
+        if (hwnd == IntPtr.Zero)
         {
-            NativeMethods.TryPlaceBehindTaskbar(hwnd, _activeMonitor);
+            AppLogger.Warn($"Flyout z-order skipped because the window handle is not ready. Reason: {reason}.");
+            return;
         }
+
+        Topmost = true;
+        var success = NativeMethods.TryMakeTopmostNoActivate(hwnd, out var error);
+        AppLogger.Info($"Flyout z-order updated: reason={reason}, hwnd=0x{hwnd.ToInt64():X}, topmostNoActivate={success}, error={error}.");
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (IsVisible)
+            {
+                var deferredSuccess = NativeMethods.TryMakeTopmostNoActivate(hwnd, out var deferredError);
+                AppLogger.Info($"Flyout z-order deferred update: reason={reason}, hwnd=0x{hwnd.ToInt64():X}, topmostNoActivate={deferredSuccess}, error={deferredError}.");
+            }
+        }, DispatcherPriority.ApplicationIdle);
     }
 
     private void SlideIn(int animationVersion)
@@ -385,6 +399,7 @@ internal sealed class FlyoutWindow : Window
             Top = top;
             Opacity = opacity;
             AppLogger.Info($"Flyout animation completed: {reason}, top={Top:0.###}, opacity={Opacity:0.###}.");
+            EnsureOverlayZOrder($"{reason} completed");
             if (opacity >= 0.99)
             {
                 _animationState = FlyoutAnimationState.Shown;
