@@ -10,11 +10,14 @@ The normal Windows volume keys keep their default behavior. Voolime only handles
 
 - The app runs in the background and exposes a tray icon.
 - The tray context menu contains `Keyboard Activation Key`, `Mouse Activation Key`, `Start with Windows`, and `Exit`.
+- The tray context menu contains `Application Keys...`, which opens a scrollable window for enabling optional character keys that target specific applications.
 - The tray context menu contains `Start with Windows`, which toggles a fixed `Voolime.lnk` shortcut in the current user's Startup folder.
 - The tray context menu contains `Open Volume Mixer`, which opens the Win32 `sndvol.exe` mixer.
 - The tray context menu contains `Open Playback and Recording Devices`, which opens the legacy Control Panel Sound dialog through `mmsys.cpl`.
 - The active app volume changes when the configured keyboard activation key is held while pressing Volume Up, Volume Down, or Mute.
 - The active app volume changes when the configured mouse activation key is held while using the mouse wheel.
+- When an enabled application key is also held, keyboard and mouse volume actions target that application instead of the active application.
+- Application-key suggestions are built from open windows and recent Core Audio sessions. Suggestions default to disabled and are persisted in the per-user settings file.
 - Single key presses adjust app volume by 0.5%. Held key repeat events adjust volume by 2% after the first press.
 - A compact Windows 11-style flyout appears near the bottom center of the active monitor.
 - The flyout follows the Windows app theme. It uses a light background in light mode, a dark background in dark mode, and the Windows accent color for the active volume bar.
@@ -30,6 +33,8 @@ The normal Windows volume keys keep their default behavior. Voolime only handles
 - `AppSettings.cs` persists user preferences in `%LOCALAPPDATA%\Voolime\settings.json`.
 - `ActiveWindowResolver.cs` identifies the active application from the foreground window, root window, visible child windows, process IDs, executable paths, and process names.
 - `AudioSessionService.cs` enumerates Core Audio render sessions and matches them to the active app. Matching uses exact process ID, executable path, process name, audio session display name, and related renderer/helper processes in the same app directory.
+- `ApplicationKeyService.cs` discovers candidate applications, tracks audio observations, assigns collision-free default character keys, and persists user choices.
+- `ApplicationKeysWindow.cs` renders the scrollable application-key editor and captures only letter, number, and punctuation keys.
 - `FlyoutWindow.cs` renders the compact overlay. It reads Windows theme and accent state at display time so theme changes are picked up without restarting the app.
 - `NativeMethods.cs` contains all Win32 and DWM P/Invoke declarations.
 - `tools/IconBuilder` generates the multi-size `.ico` asset and preview image.

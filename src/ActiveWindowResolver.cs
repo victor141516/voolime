@@ -12,6 +12,11 @@ internal sealed record ProcessIdentity(
     string ProcessName,
     string? ProcessPath);
 
+internal sealed record OpenApplicationInfo(
+    string ProcessName,
+    string? ProcessPath,
+    string DisplayName);
+
 internal sealed record ActiveAppTarget(
     IntPtr WindowHandle,
     int ProcessId,
@@ -81,6 +86,45 @@ internal sealed class ActiveWindowResolver
             primary.ProcessPath,
             displayName,
             candidates);
+    }
+
+    public IReadOnlyList<OpenApplicationInfo> GetOpenApplications()
+    {
+        var applications = new List<OpenApplicationInfo>();
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            if (!NativeMethods.IsWindowVisible(hwnd) || NativeMethods.GetWindowTextLength(hwnd) <= 0)
+            {
+                return true;
+            }
+
+            NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+            if (pid == 0 || pid == _ownProcessId)
+            {
+                return true;
+            }
+
+            var process = TryGetProcessIdentity((int)pid);
+            if (process is not null && !HostProcessNames.Contains(process.ProcessName))
+            {
+                applications.Add(new OpenApplicationInfo(
+                    process.ProcessName,
+                    process.ProcessPath,
+                    GetDisplayName(hwnd, process)));
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        return applications
+            .GroupBy(
+                static app => !string.IsNullOrWhiteSpace(app.ProcessPath)
+                    ? $"path:{app.ProcessPath}"
+                    : $"name:{app.ProcessName}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .OrderBy(static app => app.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
     }
 
     private static ProcessIdentity ChoosePrimary(IReadOnlyList<ProcessIdentity> candidates)

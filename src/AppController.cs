@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Win32;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using WpfApplication = System.Windows.Application;
 
@@ -13,8 +14,10 @@ internal sealed class AppController : IDisposable
     private readonly WpfApplication _application;
     private readonly ActiveWindowResolver _windowResolver = new();
     private readonly AudioSessionService _audio = new();
+    private readonly ApplicationKeyService _applicationKeys;
     private readonly FlyoutWindow _flyout = new();
     private readonly HotkeyService _hotkeys;
+    private readonly DispatcherTimer _applicationDiscoveryTimer;
     private readonly StartupShortcutService _startupShortcut = new();
     private readonly UpdateService _updateService = new();
     private readonly Icon _appIcon;
@@ -24,6 +27,7 @@ internal sealed class AppController : IDisposable
     private readonly ModifierMenuItems _keyboardModifierItems;
     private readonly ModifierMenuItems _mouseModifierItems;
     private ActiveAppTarget? _flyoutTarget;
+    private ApplicationKeysWindow? _applicationKeysWindow;
     private string? _indicatorMonitorDeviceName;
     private bool _disposed;
 
@@ -31,10 +35,20 @@ internal sealed class AppController : IDisposable
     {
         _application = application;
         _appIcon = LoadAppIcon();
+        _applicationKeys = new ApplicationKeyService(_audio, _windowResolver);
+        _applicationKeys.Refresh();
         _hotkeys = new HotkeyService(
             HandleHotkey,
             AppSettings.LoadKeyboardActivationModifiers(),
             AppSettings.LoadMouseActivationModifiers());
+        _applicationKeys.AssignmentsChanged += HandleApplicationKeysChanged;
+        UpdateHotkeyApplicationKeys();
+        _applicationDiscoveryTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _applicationDiscoveryTimer.Tick += HandleApplicationDiscoveryTick;
+        _applicationDiscoveryTimer.Start();
         _indicatorMonitorDeviceName = AppSettings.LoadIndicatorMonitorDeviceName();
         _flyout.SetIndicatorMonitorDeviceName(_indicatorMonitorDeviceName);
         _flyout.VolumeRequested += HandleFlyoutVolumeRequested;
@@ -63,6 +77,7 @@ internal sealed class AppController : IDisposable
         menu.Items.Add("Open Playback and Recording Devices", null, (_, _) => OpenPlaybackAndRecordingDevices());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(showIndicatorOn);
+        menu.Items.Add("Application Keys...", null, (_, _) => ShowApplicationKeys());
 
         var keyboardModifiers = CreateModifierMenu("Keyboard Activation Key", ToggleKeyboardModifier);
         var mouseModifiers = CreateModifierMenu("Mouse Activation Key", ToggleMouseModifier);
@@ -303,6 +318,29 @@ internal sealed class AppController : IDisposable
         }
     }
 
+    private void ShowApplicationKeys()
+    {
+        if (_applicationKeysWindow is { IsVisible: true })
+        {
+            _applicationKeysWindow.Activate();
+            return;
+        }
+
+        _applicationKeysWindow = new ApplicationKeysWindow(_applicationKeys);
+        _applicationKeysWindow.Closed += (_, _) => _applicationKeysWindow = null;
+        _applicationKeysWindow.Show();
+        _applicationKeysWindow.Activate();
+    }
+
+    private void HandleApplicationDiscoveryTick(object? sender, EventArgs e) =>
+        _applicationKeys.Refresh();
+
+    private void HandleApplicationKeysChanged(object? sender, EventArgs e) =>
+        UpdateHotkeyApplicationKeys();
+
+    private void UpdateHotkeyApplicationKeys() =>
+        _hotkeys.SetApplicationKeys(_applicationKeys.EnabledByVirtualKey.Keys);
+
     private static string GetModifierLabel(ActivationModifiers modifiers)
     {
         if (modifiers == ActivationModifiers.None)
@@ -393,10 +431,20 @@ internal sealed class AppController : IDisposable
 
     private void HandleHotkey(VolumeHotkeyPress press)
     {
-        AppLogger.Info($"Hotkey received: {press.Kind}, held repeat: {press.IsHeldRepeat}.");
+        AppLogger.Info($"Hotkey received: {press.Kind}, held repeat: {press.IsHeldRepeat}, application key: {press.ApplicationVirtualKey?.ToString("X2") ?? "none"}.");
         _application.Dispatcher.Invoke(() =>
         {
-            var target = _windowResolver.GetActiveTarget();
+            ActiveAppTarget? target;
+            if (press.ApplicationVirtualKey.HasValue &&
+                _applicationKeys.EnabledByVirtualKey.TryGetValue(press.ApplicationVirtualKey.Value, out var assignment))
+            {
+                target = _applicationKeys.CreateTarget(assignment);
+            }
+            else
+            {
+                target = _windowResolver.GetActiveTarget();
+            }
+
             if (target is null)
             {
                 AppLogger.Warn("No active window was detected for a hotkey press.");
@@ -466,6 +514,11 @@ internal sealed class AppController : IDisposable
 
         _disposed = true;
         SystemEvents.DisplaySettingsChanged -= HandleDisplaySettingsChanged;
+        _applicationDiscoveryTimer.Stop();
+        _applicationDiscoveryTimer.Tick -= HandleApplicationDiscoveryTick;
+        _applicationKeys.AssignmentsChanged -= HandleApplicationKeysChanged;
+        _applicationKeys.Save();
+        _applicationKeysWindow?.Close();
         _hotkeys.Dispose();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();

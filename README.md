@@ -21,6 +21,9 @@ Windows volume keys are global. Voolime makes them app-aware.
 - 🍋 Tiny. Built to stay small.
 - 🪟 Native. Feels like Windows 11.
 - ⌨️ Keyboard and mouse. Press `Shift + Volume Up`.
+- 🔑 Application keys. Hold an optional letter, number, or punctuation key to control a specific app even while another app is active.
+
+Open `Application Keys...` from the tray menu to review open and recently audible apps. Voolime suggests collision-free keys for apps with audio sessions, but keeps every suggestion disabled until you opt in.
 
 ## How It Looks
 

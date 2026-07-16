@@ -26,6 +26,11 @@ internal static class Program
             return RunTestFlyoutCommand(args);
         }
 
+        if (args.Any(arg => string.Equals(arg, "--test-application-keys", StringComparison.OrdinalIgnoreCase)))
+        {
+            return RunTestApplicationKeysCommand();
+        }
+
         using var mutex = new Mutex(true, @"Local\Voolime.FocusVolume", out var created);
         if (!created)
         {
@@ -117,6 +122,24 @@ internal static class Program
 
         app.Run();
         AppLogger.Info("Test flyout mode stopped.");
+        return 0;
+    }
+
+    private static int RunTestApplicationKeysCommand()
+    {
+        AppLogger.Info("Starting application keys test mode.");
+        var app = new WpfApplication
+        {
+            ShutdownMode = WpfShutdownMode.OnMainWindowClose
+        };
+        var audio = new AudioSessionService();
+        var windowResolver = new ActiveWindowResolver();
+        var applicationKeys = new ApplicationKeyService(audio, windowResolver);
+        applicationKeys.Refresh();
+        var window = new ApplicationKeysWindow(applicationKeys);
+        app.Run(window);
+        applicationKeys.Save();
+        AppLogger.Info("Application keys test mode stopped.");
         return 0;
     }
 

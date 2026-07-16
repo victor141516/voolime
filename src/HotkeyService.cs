@@ -14,7 +14,7 @@ internal enum ActivationModifiers
     Alt = 4
 }
 
-internal sealed record VolumeHotkeyPress(VolumeHotkeyKind Kind, bool IsHeldRepeat);
+internal sealed record VolumeHotkeyPress(VolumeHotkeyKind Kind, bool IsHeldRepeat, int? ApplicationVirtualKey);
 
 internal sealed class HotkeyService : IDisposable
 {
@@ -48,6 +48,7 @@ internal sealed class HotkeyService : IDisposable
     private readonly IntPtr _keyboardHook;
     private readonly IntPtr _mouseHook;
     private readonly HashSet<int> _heldVolumeKeys = [];
+    private int[] _applicationVirtualKeys = [];
     private ActivationModifiers _keyboardModifiers;
     private ActivationModifiers _mouseModifiers;
     private bool _disposed;
@@ -98,6 +99,9 @@ internal sealed class HotkeyService : IDisposable
 
     public void SetMouseModifiers(ActivationModifiers modifiers) =>
         _mouseModifiers = modifiers;
+
+    public void SetApplicationKeys(IEnumerable<int> virtualKeys) =>
+        _applicationVirtualKeys = virtualKeys.Distinct().Order().ToArray();
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
@@ -246,8 +250,24 @@ internal sealed class HotkeyService : IDisposable
         NativeMethods.UnregisterHotKey(_source.Handle, HotkeyVolumeMute);
     }
 
-    private void Dispatch(VolumeHotkeyKind kind, bool isHeldRepeat) =>
-        _dispatcher.BeginInvoke(() => _handler(new VolumeHotkeyPress(kind, isHeldRepeat)));
+    private int? GetPressedApplicationKey()
+    {
+        foreach (var virtualKey in _applicationVirtualKeys)
+        {
+            if (IsKeyPressed(virtualKey))
+            {
+                return virtualKey;
+            }
+        }
+
+        return null;
+    }
+
+    private void Dispatch(VolumeHotkeyKind kind, bool isHeldRepeat)
+    {
+        var applicationVirtualKey = GetPressedApplicationKey();
+        _dispatcher.BeginInvoke(() => _handler(new VolumeHotkeyPress(kind, isHeldRepeat, applicationVirtualKey)));
+    }
 
     public void Dispose()
     {

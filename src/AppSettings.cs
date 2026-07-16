@@ -67,6 +67,25 @@ internal static class AppSettings
         }
     }
 
+    public static IReadOnlyList<ApplicationKeySetting> LoadApplicationKeys() =>
+        (LoadSettings().ApplicationKeys ?? [])
+            .Where(static assignment => !string.IsNullOrWhiteSpace(assignment.AppId))
+            .Select(static assignment => assignment.Clone())
+            .ToArray();
+
+    public static void SaveApplicationKeys(IEnumerable<ApplicationKeySetting> assignments)
+    {
+        lock (Sync)
+        {
+            var settings = LoadSettings();
+            settings.ApplicationKeys = assignments
+                .Where(static assignment => !string.IsNullOrWhiteSpace(assignment.AppId))
+                .Select(static assignment => assignment.Clone())
+                .ToList();
+            SaveSettings(settings);
+        }
+    }
+
     private static SettingsFile LoadSettings()
     {
         lock (Sync)
@@ -157,5 +176,42 @@ internal static class AppSettings
         ];
 
         public string? IndicatorMonitorDeviceName { get; set; }
+
+        public List<ApplicationKeySetting>? ApplicationKeys { get; set; }
     }
+}
+
+internal sealed class ApplicationKeySetting
+{
+    public string AppId { get; set; } = string.Empty;
+
+    public string ProcessName { get; set; } = string.Empty;
+
+    public string? ProcessPath { get; set; }
+
+    public string DisplayName { get; set; } = string.Empty;
+
+    public int? VirtualKey { get; set; }
+
+    public bool Enabled { get; set; }
+
+    public bool IsUserConfigured { get; set; }
+
+    public int AudioObservationCount { get; set; }
+
+    public DateTimeOffset LastSeenUtc { get; set; }
+
+    public ApplicationKeySetting Clone() =>
+        new()
+        {
+            AppId = AppId,
+            ProcessName = ProcessName,
+            ProcessPath = ProcessPath,
+            DisplayName = DisplayName,
+            VirtualKey = VirtualKey,
+            Enabled = Enabled,
+            IsUserConfigured = IsUserConfigured,
+            AudioObservationCount = AudioObservationCount,
+            LastSeenUtc = LastSeenUtc
+        };
 }

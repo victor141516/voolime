@@ -25,10 +25,37 @@ internal sealed record VolumeChangeResult(
         new(displayName, message, 0, Muted: false, Success: false);
 }
 
+internal sealed record AudioApplicationInfo(
+    string ProcessName,
+    string? ProcessPath,
+    string DisplayName,
+    bool IsAudioActive);
+
 internal sealed class AudioSessionService
 {
     private const float FineVolumeStep = 0.005f;
     private const float HeldRepeatVolumeStep = 0.02f;
+
+    public IReadOnlyList<AudioApplicationInfo> DiscoverApplications()
+    {
+        return EnumerateSessions()
+            .GroupBy(
+                static session => !string.IsNullOrWhiteSpace(session.ProcessPath)
+                    ? $"path:{NormalizePath(session.ProcessPath)}"
+                    : $"name:{session.ProcessName}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(static group =>
+            {
+                var session = group.First();
+                return new AudioApplicationInfo(
+                    session.ProcessName,
+                    session.ProcessPath,
+                    GetApplicationDisplayName(session),
+                    group.Any(static item => item.State == CoreAudio.AudioSessionState.AudioSessionStateActive));
+            })
+            .OrderBy(static app => app.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+    }
 
     public VolumeChangeResult Apply(ActiveAppTarget target, VolumeHotkeyKind kind, bool isHeldRepeat)
     {
@@ -244,6 +271,33 @@ internal sealed class AudioSessionService
     private static string NormalizeComparableText(string? value) =>
         string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
 
+    private static string GetApplicationDisplayName(AudioSession session)
+    {
+        if (!string.IsNullOrWhiteSpace(session.ProcessPath) && File.Exists(session.ProcessPath))
+        {
+            try
+            {
+                var version = FileVersionInfo.GetVersionInfo(session.ProcessPath);
+                if (!string.IsNullOrWhiteSpace(version.FileDescription))
+                {
+                    return version.FileDescription;
+                }
+
+                if (!string.IsNullOrWhiteSpace(version.ProductName))
+                {
+                    return version.ProductName;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return !string.IsNullOrWhiteSpace(session.DisplayName)
+            ? session.DisplayName
+            : session.ProcessName;
+    }
+
     private static IEnumerable<AudioSession> EnumerateSessions()
     {
         var enumerator = (CoreAudio.IMMDeviceEnumerator)(object)new CoreAudio.MMDeviceEnumerator();
@@ -301,6 +355,7 @@ internal sealed class AudioSessionService
                 displayName,
                 Math.Clamp(level, 0f, 1f),
                 muted,
+                state,
                 volume);
         }
     }
@@ -330,6 +385,7 @@ internal sealed class AudioSessionService
         string? DisplayName,
         float Volume,
         bool Muted,
+        CoreAudio.AudioSessionState State,
         CoreAudio.ISimpleAudioVolume VolumeControl);
 
     private sealed record MatchContext(
