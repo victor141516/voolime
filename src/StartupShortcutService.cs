@@ -20,10 +20,13 @@ internal sealed class StartupShortcutService
     public string ShortcutPath => _startupShortcutPath;
 
     public bool IsEnabled() =>
-        File.Exists(_startupShortcutPath);
+        !IsManaged && File.Exists(_startupShortcutPath);
+
+    public static bool IsManaged => Environment.GetEnvironmentVariable("WINKIT_MANAGED") == "1";
 
     public bool Toggle()
     {
+        if (IsManaged) return false;
         if (IsEnabled())
         {
             File.Delete(_startupShortcutPath);
@@ -65,6 +68,7 @@ internal sealed class StartupShortcutService
 
             var shortcutType = shortcut.GetType();
             shortcutType.InvokeMember("TargetPath", System.Reflection.BindingFlags.SetProperty, null, shortcut, [_executablePath]);
+            shortcutType.InvokeMember("Arguments", System.Reflection.BindingFlags.SetProperty, null, shortcut, ["--background"]);
             shortcutType.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null, shortcut, [Path.GetDirectoryName(_executablePath) ?? string.Empty]);
             shortcutType.InvokeMember("IconLocation", System.Reflection.BindingFlags.SetProperty, null, shortcut, [$"{_executablePath},0"]);
             shortcutType.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, []);

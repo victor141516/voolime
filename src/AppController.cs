@@ -55,7 +55,7 @@ internal sealed class AppController : IDisposable
         (_trayIcon, _startWithWindowsItem, _showIndicatorOnItem, _keyboardModifierItems, _mouseModifierItems) = CreateTrayIcon();
         SystemEvents.DisplaySettingsChanged += HandleDisplaySettingsChanged;
         UpdateModifierChecks();
-        _updateService.CheckOnStartup(_application);
+        if (!StartupShortcutService.IsManaged) _updateService.CheckOnStartup(_application);
     }
 
     private (Forms.NotifyIcon TrayIcon, Forms.ToolStripMenuItem StartWithWindows, Forms.ToolStripMenuItem ShowIndicatorOn, ModifierMenuItems Keyboard, ModifierMenuItems Mouse) CreateTrayIcon()
@@ -69,7 +69,9 @@ internal sealed class AppController : IDisposable
 
         var startWithWindows = new Forms.ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleStartWithWindows())
         {
-            CheckOnClick = false
+            CheckOnClick = false,
+            Enabled = !StartupShortcutService.IsManaged,
+            ToolTipText = StartupShortcutService.IsManaged ? "Startup is managed by WinKit." : ""
         };
         var showIndicatorOn = new Forms.ToolStripMenuItem("Show Indicator On");
 

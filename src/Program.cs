@@ -17,6 +17,9 @@ internal static class Program
 
         AppLogger.Initialize();
         AppLogger.Info("Voolime starting.");
+        // --background is the shared utility contract; this app already starts without a window.
+        bool background = args.Contains("--background", StringComparer.OrdinalIgnoreCase);
+        AppLogger.Info($"Background startup requested: {background}.");
         AppLogger.Info($"Process elevated: {IsProcessElevated()}.");
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             AppLogger.Error("Unhandled exception.", e.ExceptionObject as Exception);
